@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<title>Arena tests</title>
+<meta charset="utf-8">
+<style>
+body { font: 15px/1.4 monospace; background: #0b1020; color: #dfe7ff; margin: 16px; }
+.pass { color: #5be38a; } .fail { color: #ff6b8b; font-weight: bold; }
+</style>
+<h1>Arena rule tests</h1>
+<pre id="out">running…</pre>
+<script type="module">
+import * as S from './sim.js';
+const out = [];
+let failed = 0;
+function test(name, fn) {
+  try { const note = fn(); out.push(`<span class="pass">PASS</span> ${name}${note ? ' — ' + note : ''}`); }
+  catch (e) { failed++; out.push(`<span class="fail">FAIL</span> ${name}: ${e.message}`); }
+}
+const ok = (cond, msg) => { if (!cond) throw new Error(msg); };
+const near = (a, b, eps, msg) => ok(Math.abs(a - b) <= eps, `${msg}: got ${a}, want ${b}`);
+const run = (g, seconds) => { for (let i = 0; i < Math.round(seconds / S.TICK); i++) S.step(g); };
+
+// A match with one red and one blue player, both standing still.
+function duel() {
+  const g = S.createGame();
+  const r = S.addPlayer(g, { id: 'r', name: 'R', team: 'red' });
+  const b = S.addPlayer(g, { id: 'b', name: 'B', team: 'blue' });
+  S.startMatch(g);
+  r.shieldT = b.shieldT = 0;
+  return { g, r, b };
+}
+const place = (p, x, y) => { p.x = p.px = x; p.y = p.py = y; };
+
+test('map is 48x32 with a solid border', () => {
+  ok(S.MAP_W === 48 && S.MAP_H === 32, `size ${S.MAP_W}x${S.MAP_H}`);
+  for (let x = 0; x < S.MAP_W; x++) ok(S.isWall(x, 0) && S.isWall(x, S.MAP_H - 1), `border gap at x=${x}`);
+  for (let y = 0; y < S.MAP_H; y++) ok(S.isWall(0, y) && S.isWall(S.MAP_W - 1, y), `border gap at y=${y}`);
+});
+
+test('every floor tile is reachable from the red flag', () => {
+  let floors = 0, reached = 0;
+  const s = S.STANDS.red;
+  for (let y = 0; y < S.MAP_H; y++) for (let x = 0; x < S.MAP_W; x++) {
+    if (S.isWall(x, y)) continue;
+    floors++;
+    if ((x === Math.floor(s.x) && y === Math.floor(s.y)) || S.findPath(Math.floor(s.x), Math.floor(s.y), x, y).length) reached++;
+  }
+  ok(reached === floors, `${reached}/${floors}`);
+  return `${floors} floor tiles`;
+});
+
+test('flag stands and spawns are clear of walls', () => {
+  for (const t of S.TEAMS) {
+    ok(!S.boxHitsWall(S.STANDS[t].x, S.STANDS[t].y), `${t} stand`);
+    for (const p of S.SPAWNS[t]) ok(!S.boxHitsWall(p.x, p.y), `${t} spawn ${p.x},${p.y}`);
+  }
+});
+
+test('walking into a wall stops flush against it', () => {
+  const p = { x: 2.5, y: 13.5 };
+  for (let i = 0; i < 60; i++) S.move(p, -1, 0, S.TICK);
+  near(p.x, 1 + S.HALF, 0.01, 'x');
+  near(p.y, 13.5, 1e-9, 'y unchanged');
+});
+
+test('moving diagonally into a wall slides along it', () => {
+  const p = { x: 2.5, y: 13.5 };
+  for (let i = 0; i < 6; i++) S.move(p, -1, 1, S.TICK);
+  ok(p.y > 13.9, `slid to y=${p.y}`);
+  ok(!S.boxHitsWall(p.x, p.y), 'not inside a wall');
+});
+
+test('a shot hits an enemy for 20 damage', () => {
+  const { g, r, b } = duel();
+  place(r, 5, 13.5); place(b, 12, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  S.step(g); r.input.fire = false;
+  run(g, 0.5);
+  ok(b.hp === 80, `hp ${b.hp}`);
+  ok(r.ammo === S.CELL - 1, `ammo ${r.ammo}`);
+});
+
+test('shots do not hurt teammates', () => {
+  const { g, r } = duel();
+  const mate = S.addPlayer(g, { id: 'r2', name: 'R2', team: 'red' });
+  mate.shieldT = 0;
+  place(r, 5, 13.5); place(mate, 12, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  run(g, 0.5);
+  ok(mate.hp === 100, `hp ${mate.hp}`);
+});
+
+test('walls block shots', () => {
+  const { g, r, b } = duel();
+  place(r, 13.5, 11.5); place(b, 13.5, 13.5);
+  r.input.aim = Math.PI / 2; r.input.fire = true;
+  run(g, 1);
+  ok(b.hp === 100, `hp ${b.hp}`);
+  ok(g.events.some(e => e.k === 'zap'), 'a zap event');
+});
+
+test('spawn shield blocks damage', () => {
+  const { g, r, b } = duel();
+  place(r, 5, 13.5); place(b, 12, 13.5);
+  b.shieldT = 5;
+  r.input.aim = 0; r.input.fire = true;
+  run(g, 0.4);
+  ok(b.hp === 100, `hp ${b.hp}`);
+});
+
+test('five hits disable, then respawn at base after 4 s', () => {
+  const { g, r, b } = duel();
+  place(r, 5, 13.5); place(b, 12, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  run(g, 1.6);
+  r.input.fire = false;
+  ok(!b.alive, 'blue still up');
+  ok(r.kills === 1 && b.deaths === 1, `kills ${r.kills} deaths ${b.deaths}`);
+  run(g, S.RESPAWN + 0.1);
+  ok(b.alive && b.hp === 100, 'blue respawned');
+  ok(S.SPAWNS.blue.some(s => s.x === b.x && s.y === b.y), `at spawn ${b.x},${b.y}`);
+});
+
+test('energy cell empties after 20 shots and reloads', () => {
+  const { g, r } = duel();
+  place(r, 5, 13.5);
+  r.input.aim = Math.PI; r.input.fire = true;
+  run(g, 20 * S.FIRE_GAP + 0.2);
+  ok(r.reloadT > 0, `reloading (ammo ${r.ammo})`);
+  r.input.fire = false;
+  run(g, S.RELOAD + 0.1);
+  ok(r.ammo === S.CELL, `ammo ${r.ammo}`);
+});
+
+test('flag pickup, drop on disable, return by teammate', () => {
+  const { g, r, b } = duel();
+  place(b, S.STANDS.red.x, S.STANDS.red.y);
+  S.step(g);
+  ok(g.flags.red.state === 'carried' && g.flags.red.carrier === 'b', 'blue carries red flag');
+  place(b, 12, 13.5); S.step(g);
+  b.hp = 20; place(r, 5, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  run(g, 0.5); r.input.fire = false;
+  ok(!b.alive, 'carrier disabled');
+  ok(g.flags.red.state === 'dropped', `state ${g.flags.red.state}`);
+  r.input.mx = 1;
+  run(g, 1.6);
+  ok(g.flags.red.state === 'home', `state ${g.flags.red.state}`);
+  ok(g.events.some(e => e.k === 'ret' && e.p === 'r'), 'return event');
+});
+
+test('a dropped flag flies home by itself after 20 s', () => {
+  const { g, b } = duel();
+  place(b, S.STANDS.red.x, S.STANDS.red.y);
+  S.step(g);
+  place(b, 20, 13.5); S.step(g);
+  b.hp = 0; b.alive = false; b.respawnT = 999;
+  g.flags.red.state = 'dropped'; g.flags.red.carrier = null; g.flags.red.returnT = S.FLAG_RETURN;
+  run(g, S.FLAG_RETURN + 0.1);
+  ok(g.flags.red.state === 'home', `state ${g.flags.red.state}`);
+});
+
+test('capture only counts while your own flag is home', () => {
+  const { g, r, b } = duel();
+  place(r, S.STANDS.blue.x, S.STANDS.blue.y); S.step(g);
+  ok(g.flags.blue.carrier === 'r', 'red carries blue flag');
+  place(b, S.STANDS.red.x, S.STANDS.red.y); S.step(g);
+  ok(g.flags.red.carrier === 'b', 'blue carries red flag');
+  place(b, 30, 13.5); S.step(g);
+  place(r, S.STANDS.red.x, S.STANDS.red.y); S.step(g);
+  ok(g.score.red === 0, 'no capture while own flag away');
+  place(b, S.STANDS.blue.x, S.STANDS.blue.y); S.step(g);
+  ok(g.score.blue === 0, 'blue can not capture either');
+  S.removePlayer(g, 'b'); S.step(g);
+  ok(g.flags.red.state === 'dropped', 'red flag dropped when its carrier left');
+  run(g, S.FLAG_RETURN + 0.2);
+  ok(g.score.red === 1 && r.caps === 1, `score ${g.score.red}`);
+});
+
+test('three captures win the match', () => {
+  const { g, r } = duel();
+  for (let i = 0; i < 3; i++) {
+    place(r, S.STANDS.blue.x, S.STANDS.blue.y); S.step(g);
+    place(r, S.STANDS.red.x, S.STANDS.red.y); S.step(g);
+  }
+  ok(g.phase === 'over' && g.winner === 'red', `phase ${g.phase} winner ${g.winner}`);
+});
+
+test('time running out ends the match', () => {
+  const { g } = duel();
+  g.time = 0.05;
+  run(g, 0.2);
+  ok(g.phase === 'over' && g.winner === null, `phase ${g.phase} winner ${g.winner}`);
+});
+
+test('team switching respects the team size', () => {
+  const g = S.createGame();
+  for (let i = 0; i < 4; i++) S.addBot(g, 'red');
+  ok(!S.addBot(g, 'red'), 'fifth red bot refused');
+  const p = S.addPlayer(g, { id: 'x', name: 'X' });
+  ok(p.team === 'blue', 'joins smaller team');
+  ok(!S.setTeam(g, 'x', 'red'), 'cannot switch into a full team');
+});
+
+test('snapshot and roster are plain JSON', () => {
+  const { g } = duel();
+  S.addBot(g, 'red');
+  const snap = JSON.parse(JSON.stringify(S.snapshot(g)));
+  ok(snap.p.length === 3 && snap.f.length === 2, 'counts');
+  const ros = JSON.parse(JSON.stringify(S.roster(g)));
+  ok(ros.players.length === 3, 'roster');
+  return `${JSON.stringify(S.snapshot(g)).length} bytes`;
+});
+
+test('4v4 bot match runs 3 minutes and produces action', () => {
+  const g = S.createGame();
+  for (let i = 0; i < 4; i++) { S.addBot(g, 'red'); S.addBot(g, 'blue'); }
+  S.startMatch(g);
+  let picks = 0, caps = 0, kills = 0, maxShots = 0;
+  for (let i = 0; i < 180 / S.TICK && g.phase === 'play'; i++) {
+    S.step(g);
+    for (const e of g.events) { if (e.k === 'pick') picks++; if (e.k === 'cap') caps++; if (e.k === 'kill') kills++; }
+    g.events = [];
+    maxShots = Math.max(maxShots, g.shots.length);
+    for (const p of Object.values(g.players)) if (p.alive && S.boxHitsWall(p.x, p.y)) throw new Error(`${p.name} inside a wall`);
+  }
+  ok(kills > 0, 'no takedowns');
+  ok(picks > 0, 'no flag pickups');
+  return `takedowns ${kills}, pickups ${picks}, captures ${caps}, score ${g.score.red}-${g.score.blue}, most shots in flight ${maxShots}, ${g.phase}`;
+});
+
+document.getElementById('out').innerHTML = out.join('\n') + `\n\n${failed ? `<span class="fail">${failed} FAILED</span>` : '<span class="pass">ALL PASSED</span>'}`;
+document.title = failed ? 'FAIL' : 'PASS';
+</script>
