@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="da">
+<title>Davids Lastbil</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&display=swap">
+<style>
+/* Layout: one full-screen toy board, a sibling of Davids Brandbil. A chunky cream top bar sits over a top-down city canvas.
+   Deliberately one light toy-box look in every theme, so all colors are set explicitly. */
+:root {
+  --sky: #bfe6ff;
+  --cream: #fff8e6;
+  --ink: #2b2340;
+  --cab: #7a4fc9;
+  --gold: #ffc21a;
+  --display: "Baloo 2", "Trebuchet MS", "Arial Rounded MT Bold", system-ui, sans-serif;
+  color-scheme: light;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; overflow: hidden; background: var(--sky); color: var(--ink); }
+body { -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+
+#app {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--sky);
+  font-family: var(--display);
+}
+
+header {
+  display: flex; align-items: center; gap: 12px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--cream);
+  border-bottom: 4px solid var(--ink);
+}
+h1 {
+  margin: 0; flex: 1; min-width: 0;
+  font-size: clamp(1.3rem, 3.2vw, 2rem); font-weight: 800; line-height: 1;
+  color: var(--cab); text-wrap: balance; text-align: center;
+  letter-spacing: 0.01em;
+}
+.stars {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 16px 4px 10px;
+  background: var(--gold); border: 3px solid var(--ink); border-radius: 999px;
+  box-shadow: 0 4px 0 var(--ink);
+  font-size: 1.9rem; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.stars svg { width: 34px; height: 34px; }
+.stars.bump, .avatar.bump { animation: bump 0.5s ease; }
+.avatar {
+  width: 58px; height: 58px; flex: none;
+  border-radius: 50%; border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  background: var(--gold);
+  display: grid; place-items: center;
+  font-size: 34px; line-height: 1;
+}
+@keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.3) rotate(-6deg); } 100% { transform: scale(1); } }
+
+.actions { display: flex; gap: 10px; align-items: center; }
+button {
+  font: inherit; color: var(--ink); cursor: pointer;
+  border: 3px solid var(--ink); border-radius: 999px;
+  box-shadow: 0 4px 0 var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+button:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+button:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
+.honk {
+  background: var(--cab); color: var(--cream);
+  font-size: 1.5rem; font-weight: 800; line-height: 1;
+  padding: 10px 22px;
+}
+.sound { background: var(--cream); width: 52px; height: 52px; display: grid; place-items: center; padding: 0; }
+.sound svg { width: 28px; height: 28px; }
+.home { background: var(--cream); width: 52px; height: 52px; display: grid; place-items: center; padding: 0;
+  color: var(--ink); text-decoration: none; cursor: pointer;
+  border: 3px solid var(--ink); border-radius: 999px; box-shadow: 0 4px 0 var(--ink);
+  transition: transform 0.08s, box-shadow 0.08s; }
+.home:active { transform: translateY(4px); box-shadow: 0 0 0 var(--ink); }
+.home:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
+.home svg { width: 28px; height: 28px; }
+
+#board { position: relative; flex: 1; min-height: 0; background: #8fd16a; }
+#city { position: absolute; inset: 0; display: block; touch-action: none; }
+
+.hint {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  max-width: calc(100% - 32px); width: max-content;
+  padding: 8px 20px;
+  background: var(--cream); border: 3px solid var(--ink); border-radius: 18px;
+  box-shadow: 0 4px 0 var(--ink);
+  font-size: clamp(1.1rem, 3vw, 1.5rem); font-weight: 800; text-align: center;
+  pointer-events: none;
+  animation: float 1.6s ease-in-out infinite;
+}
+@keyframes float { 50% { transform: translate(-50%, -6px); } }
+
+.banner {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  width: max-content; max-width: calc(100% - 32px);
+  padding: 12px 28px;
+  background: var(--gold); border: 4px solid var(--ink); border-radius: 24px;
+  box-shadow: 0 6px 0 var(--ink);
+  font-size: clamp(1.8rem, 6vw, 3.4rem); font-weight: 800; line-height: 1.1; text-align: center;
+  pointer-events: none;
+  animation: pop 0.5s cubic-bezier(.3,1.6,.5,1);
+}
+.banner-emoji { font-size: clamp(4rem, 14vw, 7rem); line-height: 1; }
+@keyframes pop { from { transform: translate(-50%, -50%) scale(0.2); } to { transform: translate(-50%, -50%) scale(1); } }
+
+@media (max-width: 560px) {
+  h1 { font-size: 1.15rem; }
+  .honk { font-size: 1.2rem; padding: 8px 16px; }
+  .sound { width: 44px; height: 44px; }
+  .stars { font-size: 1.5rem; }
+  .stars svg { width: 26px; height: 26px; }
+  .avatar { width: 46px; height: 46px; font-size: 27px; }
+}
+@media (max-width: 400px) { h1 { display: none; } header { justify-content: space-between; } }
+@media (prefers-reduced-motion: reduce) {
+  .hint, .stars.bump, .avatar.bump, .banner { animation: none; }
+}
+</style>
+
+<div id="app">
+  <header>
+    <span id="avatar" class="avatar" role="img" aria-label="Lastbil">🚚</span>
+    <div id="stars" class="stars" aria-live="polite" aria-label="Leverede kasser">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.9 6 6.6.8-4.9 4.5 1.3 6.5L12 17l-5.9 3.3 1.3-6.5L2.5 9.3l6.6-.8z" fill="#fff8e6" stroke="#2b2340" stroke-width="2" stroke-linejoin="round"/></svg>
+      <span id="starCount">0</span>
+    </div>
+    <h1>Davids Lastbil</h1>
+    <div class="actions">
+      <a id="homeBtn" class="home" href="../" aria-label="Til forsiden" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5L12 4l9 7.5" fill="none" stroke="#2b2340" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10v9.5h5v-5h3v5h5V10" fill="#2b2340"/></svg>
+      </a>
+      <button id="soundBtn" class="sound" aria-label="Slå lyden fra">
+        <svg id="iconOn" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="#2b2340"/><path d="M16 8.5a5 5 0 010 7M18.5 6a8.5 8.5 0 010 12" fill="none" stroke="#2b2340" stroke-width="2.2" stroke-linecap="round"/></svg>
+        <svg id="iconOff" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M4 9h4l5-4v14l-5-4H4z" fill="#2b2340"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5" stroke="#2b2340" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </button>
+      <button id="honkBtn" class="honk">Dyt!</button>
+    </div>
+  </header>
+  <div id="board">
+    <canvas id="city" aria-label="En lille by med farvede lagre og butikker. Tryk på et lager for at hente en kasse, og kør den til en butik med samme farve."></canvas>
+    <div id="hint" class="hint">David, tryk på et lager for at hente en kasse!</div>
+    <div id="banner" class="banner" hidden><span class="banner-emoji" aria-hidden="true">🚚📦</span><span id="bannerText">Super-chauffør!</span></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const wrap = document.getElementById('board');
+  const cv = document.getElementById('city');
+  const ctx = cv.getContext('2d');
+  const starBox = document.getElementById('stars');
+  const starCount = document.getElementById('starCount');
+  const hintEl = document.getElementById('hint');
+  const banner = document.getElementById('banner');
+  const bannerText = document.getElementById('bannerText');
+  const soundBtn = document.getElementById('soundBtn');
+  const avatar = document.getElementById('avatar');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const INK = '#2b2340';
+  const CAB = '#7a4fc9';
+  const FONT = '"Baloo 2", "Trebuchet MS", sans-serif';
+  // each color has one warehouse (lager), crates of that color, and two shops that want them
+  const COLORS = {
+    red:    { fill: '#e8352b', dark: '#a8231b', light: '#ffc9c4', indef: 'rød',  def: 'røde' },
+    blue:   { fill: '#3a86e8', dark: '#22579e', light: '#c6defc', indef: 'blå',  def: 'blå' },
+    green:  { fill: '#2fa84f', dark: '#1d6e33', light: '#c4efcf', indef: 'grøn', def: 'grønne' },
+    yellow: { fill: '#ffc21a', dark: '#b07c00', light: '#fff1b8', indef: 'gul',  def: 'gule' },
+  };
+  const SHOPS = {
+    red:    [{ sign: 'BAGER', name: 'Bageren', icon: 'bread' }, { sign: 'LEGETØJ', name: 'Legetøjsbutikken', icon: 'ball' }],
+    blue:   [{ sign: 'FISK', name: 'Fiskehuset', icon: 'fish' }, { sign: 'BØGER', name: 'Boghandlen', icon: 'book' }],
+    green:  [{ sign: 'GRØNT', name: 'Grønthandlen', icon: 'carrot' }, { sign: 'BLOMSTER', name: 'Blomsterbutikken', icon: 'flower' }],
+    yellow: [{ sign: 'IS', name: 'Isbutikken', icon: 'ice' }, { sign: 'CYKLER', name: 'Cykelbutikken', icon: 'bike' }],
+  };
+  // W = warehouse, S = shop; read row by row (4 per row in landscape, 3 in portrait)
+  const LAYOUT = ['W:red', 'S:blue:0', 'S:green:0', 'W:yellow', 'S:yellow:0', 'S:red:0', 'S:blue:1', 'S:green:1', 'W:green', 'S:red:1', 'S:yellow:1', 'W:blue'];
+  const CHEERS = ['Tak, David!', 'Hurra!', 'Godt kørt, David!', 'Super chauffør!', 'Lige hvad vi manglede!'];
+  const BANNERS = ['Super-chauffør David!', 'Byens bedste lastbil!', 'David kører varerne ud!', 'Lastbil-helten David!'];
+  // things cartoon David says now and then, in a speech bubble (and out loud if there is a Danish voice)
+  const SAY = {
+    hello: ['Hej! Jeg kører lastbil!', 'Kom, vi kører varer ud!'],
+    go: ['Af sted!', 'Brum brum!', 'Vi kører!'],
+    deliver: ['Værsgo!', 'Her er jeres varer!', 'Leveret!', 'Det klarede vi!'],
+    idle: ['Jeg elsker min lastbil!', 'Hvor skal vi hen?', 'Brum brum!', 'Min lastbil er stærk!'],
+    honk: ['Dyt dyt!', 'Plads til lastbilen!'],
+  };
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const SPEED = 4; // tiles per second
+  const DAVID = 0.55; // David's height in tiles
+
+  let W = 0, H = 0, dpr = 1, cols = 9, rows = 7, tile = 40, ox = 0, oy = 0, landscape = null;
+  let buildings = [], truck = null;
+  let parts = [], texts = [], flights = [];
+  let stars = 0, idleT = 0, time = 0, heldDir = null, bannerT = 0, davidJump = 0, lwScale = 1;
+  let speech = null, sayCool = 0, quietT = 8;
+  let order = null, orderT = 4, lastShop = '', hintStage = 0;
+
+  // ---------- city ----------
+  function buildCity() {
+    cols = landscape ? 9 : 7;
+    rows = landscape ? 7 : 9;
+    buildings = [];
+    let i = 0;
+    for (let y = 1; y < rows; y += 2) {
+      for (let x = 1; x < cols; x += 2) {
+        const [kind, color, n] = LAYOUT[i++].split(':');
+        const b = { x, y, color, kind: kind === 'W' ? 'warehouse' : 'shop', happy: 0 };
+        if (b.kind === 'shop') Object.assign(b, SHOPS[color][+n]);
+        buildings.push(b);
+      }
+    }
+    let sx = cols >> 1, sy = rows >> 1;
+    if (sx % 2 && sy % 2) sy--;
+    truck = { x: sx, y: sy, path: [], face: 1, target: null, cargo: truck ? truck.cargo : null };
+    parts = []; texts = []; flights = [];
+    if (order) order = buildings.find(b => b.name === order.name);
+  }
+  const isRoad = (x, y) => x >= 0 && y >= 0 && x < cols && y < rows && (x % 2 === 0 || y % 2 === 0);
+  const buildingAt = (x, y) => buildings.find(b => b.x === x && b.y === y);
+
+  function findPath(sx, sy, isGoal) {
+    const key = (x, y) => y * cols + x;
+    const prev = new Map([[key(sx, sy), -1]]);
+    const queue = [[sx, sy]];
+    while (queue.length) {
+      const [x, y] = queue.shift();
+      if (isGoal(x, y)) {
+        const path = [];
+        let k = key(x, y);
+        while (k !== key(sx, sy)) { path.unshift({ x: k % cols, y: Math.floor(k / cols) }); k = prev.get(k); }
+        return path;
+      }
+      for (const [dx, dy] of DIRS) {
+        const nx = x + dx, ny = y + dy;
+        if (isRoad(nx, ny) && !prev.has(key(nx, ny))) { prev.set(key(nx, ny), key(x, y)); queue.push([nx, ny]); }
+      }
+    }
+    return null;
+  }
+
+  function sendTo(x, y) {
+    const b = buildingAt(x, y);
+    if (!b && !isRoad(x, y)) return;
+    const moving = truck.path.length > 0;
+    const from = moving ? truck.path[0] : truck;
+    const isGoal = b ? (gx, gy) => Math.abs(gx - b.x) + Math.abs(gy - b.y) === 1 : (gx, gy) => gx === x && gy === y;
+    const p = findPath(from.x, from.y, isGoal);
+    if (!p) return;
+    truck.path = moving ? [truck.path[0], ...p] : p;
+    truck.target = b || null;
+    idleT = 0;
+    if (b && !truck.path.length) { truck.target = null; arrive(b); }
+    else if (b && p.length > 1) say('go', 0.35);
+  }
+
+  // ---------- game events ----------
+  const bedSpot = () => ({ x: truck.x + 0.5 - truck.face * 0.16, y: truck.y + 0.36 });
+
+  function fly(from, to, color, done) {
+    flights.push({ from, to, color, done, t: 0, dur: 0.6 });
+    beep(500, 0.15, { type: 'triangle', vol: 0.08, to: 800 });
+  }
+
+  // the truck has parked next to building b
+  function arrive(b) {
+    if (b.x !== truck.x) truck.face = Math.sign(b.x - truck.x);
+    const c = COLORS[b.color];
+    if (b.kind === 'warehouse') {
+      if (truck.cargo === b.color) { say(`Vi har allerede en ${c.indef} kasse. Den skal til en ${c.indef} butik!`, 1, true); idleT = 3; return; }
+      const swap = truck.cargo;
+      truck.cargo = null;
+      fly({ x: b.x + 0.7, y: b.y + 0.6 }, bedSpot(), b.color, () => {
+        truck.cargo = b.color;
+        [392, 523].forEach((f, i) => beep(f, 0.18, { type: 'triangle', vol: 0.12, delay: i * 0.1 }));
+        if (hintStage === 0) { hintStage = 1; hintEl.textContent = 'Kør kassen hen til en butik med samme farve!'; }
+      });
+      say(swap ? `Vi bytter til en ${c.indef} kasse!` : [`En ${c.indef} kasse!`, 'Op på ladet!', `Den ${c.def} kasse skal til en ${c.indef} butik!`], 1, true);
+    } else {
+      if (!truck.cargo) { say(`Vi skal først hente en ${c.indef} kasse på det ${c.def} lager!`, 1, true); idleT = 3; return; }
+      if (truck.cargo !== b.color) {
+        const k = COLORS[truck.cargo];
+        say(`Hov! Den ${k.def} kasse skal til en ${k.indef} butik.`, 1, true);
+        idleT = 3;
+        return;
+      }
+      const col = truck.cargo;
+      truck.cargo = null;
+      fly(bedSpot(), { x: b.x + 0.5, y: b.y + 0.62 }, col, () => delivered(b));
+    }
+  }
+
+  function delivered(b) {
+    stars++;
+    starCount.textContent = stars;
+    for (const el of [starBox, avatar]) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+    b.happy = 3; davidJump = 1.2;
+    hintStage = 2; hintEl.hidden = true;
+    texts.push({ text: CHEERS[Math.random() * CHEERS.length | 0], x: b.x + 0.5, y: b.y + 0.1, life: 1.8, max: 1.8, color: COLORS[b.color].dark });
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random() * Math.PI * 2, v = 1 + Math.random() * 2;
+      parts.push({ kind: 'spark', x: b.x + 0.5, y: b.y + 0.5, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1, g: 3, life: 0.9, max: 0.9 });
+    }
+    [523, 659, 784, 1047].forEach((f, i) => beep(f, 0.28, { type: 'triangle', vol: 0.16, delay: i * 0.09 }));
+    const wanted = order === b;
+    if (wanted) { order = null; orderT = 3.5; lastShop = b.name; }
+    if (stars % 5 === 0) celebrate();
+    say(wanted ? [`${b.name} siger tak!`, ...SAY.deliver] : 'deliver', 1, true);
+  }
+
+  // one shop at a time asks for a crate of its color; there is no hurry
+  function newOrder() {
+    const shops = buildings.filter(b => b.kind === 'shop' && b.name !== lastShop);
+    order = shops[Math.random() * shops.length | 0];
+    say(`${order.name} vil gerne have en ${COLORS[order.color].indef} kasse!`, 1, !speech);
+  }
+
+  function celebrate() {
+    bannerText.textContent = BANNERS[(stars / 5 - 1) % BANNERS.length];
+    banner.hidden = false;
+    bannerT = 4.5;
+    const colors = ['#e8352b', '#ffc21a', '#3a86e8', '#2fa84f', '#b7a6ff', '#ff9fb2'];
+    for (let i = 0; i < (reduce ? 30 : 110); i++) {
+      parts.push({
+        kind: 'confetti', x: Math.random() * cols, y: -0.5 - Math.random() * 2,
+        vx: (Math.random() - 0.5) * 1.5, vy: Math.random() * 2, g: 2.5,
+        life: 3.5, max: 3.5, color: colors[i % colors.length], rot: Math.random() * 6, spin: (Math.random() - 0.5) * 12,
+      });
+    }
+    [523, 523, 659, 784].forEach((f, i) => beep(f, i === 3 ? 0.6 : 0.16, { type: 'square', vol: 0.07, delay: 0.5 + i * 0.14 }));
+  }
+
+  function honk() {
+    ensureAudio();
+    beep(294, 0.45, { type: 'square', vol: 0.08 });
+    beep(370, 0.45, { type: 'square', vol: 0.06 });
+    texts.push({ text: 'DYT!', x: truck.x + 0.5, y: truck.y - 0.1, life: 1, max: 1, color: CAB });
+    say('honk', 0.3);
+  }
+
+  // David says a random line; `what` is a SAY key, a list of lines or one line. `chance` keeps him from talking every time
+  function say(what, chance = 1, now = false) {
+    if ((sayCool > 0 && !now) || Math.random() > chance) return;
+    const lines = Array.isArray(what) ? what : SAY[what] || [what];
+    const text = lines[Math.random() * lines.length | 0];
+    speech = { text, life: 3, max: 3 };
+    sayCool = 5;
+    quietT = 0;
+    speak(text);
+  }
+
+  // ---------- update ----------
+  function update(dt) {
+    time += dt;
+
+    // drive
+    const wasMoving = truck.path.length > 0;
+    if (truck.path.length) {
+      const n = truck.path[0];
+      const dx = n.x - truck.x, dy = n.y - truck.y, d = Math.hypot(dx, dy), step = SPEED * dt;
+      if (dx) truck.face = Math.sign(dx);
+      if (d <= step) { truck.x = n.x; truck.y = n.y; truck.path.shift(); }
+      else { truck.x += dx / d * step; truck.y += dy / d * step; }
+    } else if (heldDir) {
+      const nx = truck.x + heldDir[0], ny = truck.y + heldDir[1];
+      if (isRoad(nx, ny)) { truck.path.push({ x: nx, y: ny }); truck.target = null; }
+    }
+    if (wasMoving && !truck.path.length && truck.target) {
+      const b = truck.target;
+      truck.target = null;
+      arrive(b);
+    }
+
+    for (const f of flights) f.t += dt;
+    const landed = flights.filter(f => f.t >= f.dur);
+    flights = flights.filter(f => f.t < f.dur);
+    for (const f of landed) f.done();
+
+    for (const b of buildings) {
+      if (b.happy > 0) {
+        b.happy -= dt;
+        if (Math.random() < dt * 4) {
+          parts.push({ kind: 'heart', x: b.x + 0.3 + Math.random() * 0.4, y: b.y + 0.4, vx: (Math.random() - 0.5) * 0.3, vy: -0.7, g: 0, life: 1.3, max: 1.3 });
+        }
+      }
+    }
+
+    for (const p of parts) {
+      p.life -= dt; p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.spin) p.rot += p.spin * dt;
+    }
+    parts = parts.filter(p => p.life > 0);
+    for (const t of texts) { t.life -= dt; t.y -= dt * 0.5; }
+    texts = texts.filter(t => t.life > 0);
+
+    const calm = !truck.path.length && !flights.length;
+    idleT = calm ? idleT + dt : 0;
+
+    if (davidJump > 0) davidJump -= dt;
+    if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) banner.hidden = true; }
+
+    if (!order) { orderT -= dt; if (orderT <= 0) newOrder(); }
+
+    if (sayCool > 0) sayCool -= dt;
+    if (speech) { speech.life -= dt; if (speech.life <= 0) speech = null; }
+    quietT = calm ? quietT + dt : 0;
+    if (quietT > 10) { quietT = 0; say(stars ? 'idle' : 'hello', 0.6); }
+
+    setEngine(truck.path.length > 0);
+  }
+
+  // David hops out and stands beside the truck whenever it is parked
+  const davidSpot = () => ({ x: truck.x + 0.5 + truck.face * 0.32, y: truck.y + 0.84 });
+
+  // where the bouncing arrow points when David waits: the next useful stop
+  function goal() {
+    if (truck.cargo) {
+      if (order && order.color === truck.cargo) return order;
+      let best = null, bd = Infinity;
+      for (const b of buildings) {
+        if (b.kind !== 'shop' || b.color !== truck.cargo) continue;
+        const d = Math.abs(b.x - truck.x) + Math.abs(b.y - truck.y);
+        if (d < bd) { bd = d; best = b; }
+      }
+      return best;
+    }
+    return order ? buildings.find(b => b.kind === 'warehouse' && b.color === order.color) : null;
+  }
+
+  // ---------- drawing helpers ----------
+  const X = tx => ox + tx * tile;
+  const Y = ty => oy + ty * tile;
+  function rr(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function outline() { ctx.lineWidth = Math.max(1.5 * lwScale, tile * 0.022 * lwScale); ctx.lineJoin = 'round'; ctx.strokeStyle = INK; ctx.stroke(); }
+  function box(x, y, w, h, fill, r = 0) {
+    if (r) rr(x, y, w, h, r); else { ctx.beginPath(); ctx.rect(x, y, w, h); }
+    ctx.fillStyle = fill; ctx.fill(); outline();
+  }
+  function poly(pts, fill) {
+    ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.closePath(); ctx.fillStyle = fill; ctx.fill(); outline();
+  }
+  function circle(x, y, r, fill, stroke = true) {
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = fill; ctx.fill(); if (stroke) outline();
+  }
+  function crate(x, y, w, h, color) {
+    const c = COLORS[color], m = Math.min(w, h), i = m * 0.15;
+    box(x, y, w, h, c.fill, m * 0.08);
+    ctx.beginPath();
+    ctx.rect(x + i, y + i, w - 2 * i, h - 2 * i);
+    ctx.moveTo(x + i, y + i); ctx.lineTo(x + w - i, y + h - i);
+    ctx.strokeStyle = c.dark; ctx.lineWidth = Math.max(1, m * 0.07); ctx.stroke();
+  }
+  function label(text, x, y, size, color, maxW) {
+    ctx.fillStyle = color; ctx.font = `800 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y, maxW);
+  }
+
+  // little pictures in the shop windows
+  function icon(kind, x, y, r) {
+    switch (kind) {
+      case 'bread': {
+        ctx.beginPath(); ctx.ellipse(x, y, r * 1.1, r * 0.6, 0, 0, Math.PI * 2); ctx.fillStyle = '#d9954a'; ctx.fill(); outline();
+        ctx.beginPath();
+        for (const dx of [-0.45, 0, 0.45]) { ctx.moveTo(x + (dx - 0.12) * r, y - r * 0.3); ctx.lineTo(x + (dx + 0.12) * r, y + r * 0.3); }
+        ctx.stroke();
+        break;
+      }
+      case 'ball':
+        circle(x, y, r * 0.8, '#ff5c8a');
+        circle(x - r * 0.25, y - r * 0.25, r * 0.22, '#ffffff', false);
+        break;
+      case 'fish':
+        poly([x + r * 0.5, y, x + r * 1.05, y - r * 0.45, x + r * 1.05, y + r * 0.45], '#6cc3ff');
+        ctx.beginPath(); ctx.ellipse(x - r * 0.1, y, r * 0.75, r * 0.45, 0, 0, Math.PI * 2); ctx.fillStyle = '#6cc3ff'; ctx.fill(); outline();
+        circle(x - r * 0.45, y - r * 0.08, r * 0.09, INK, false);
+        break;
+      case 'book':
+        box(x - r * 0.8, y - r * 0.6, r * 1.6, r * 1.2, '#7a4fc9');
+        ctx.beginPath(); ctx.moveTo(x, y - r * 0.6); ctx.lineTo(x, y + r * 0.6); ctx.strokeStyle = '#fff8e6'; ctx.stroke();
+        break;
+      case 'carrot':
+        poly([x - r * 0.15, y - r * 0.55, x - r * 0.45, y - r * 0.95, x + r * 0.05, y - r * 0.6], '#3fae55');
+        poly([x + r * 0.15, y - r * 0.55, x + r * 0.45, y - r * 0.95, x - r * 0.05, y - r * 0.6], '#3fae55');
+        poly([x - r * 0.35, y - r * 0.55, x + r * 0.35, y - r * 0.55, x, y + r * 0.9], '#ff8a1c');
+        break;
+      case 'flower':
+        for (let i = 0; i < 5; i++) {
+          const a = i / 5 * Math.PI * 2 - Math.PI / 2;
+          circle(x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.45, r * 0.33, '#ff9fb2');
+        }
+        circle(x, y, r * 0.3, '#ffc21a');
+        break;
+      case 'ice':
+        poly([x - r * 0.42, y - r * 0.05, x + r * 0.42, y - r * 0.05, x, y + r * 0.95], '#e0b071');
+        circle(x, y - r * 0.3, r * 0.48, '#ff9fb2');
+        break;
+      case 'bike':
+        circle(x - r * 0.55, y + r * 0.25, r * 0.38, '#ffffff');
+        circle(x + r * 0.55, y + r * 0.25, r * 0.38, '#ffffff');
+        ctx.beginPath();
+        ctx.moveTo(x - r * 0.55, y + r * 0.25); ctx.lineTo(x - r * 0.1, y - r * 0.35); ctx.lineTo(x + r * 0.35, y - r * 0.35);
+        ctx.lineTo(x + r * 0.55, y + r * 0.25); ctx.moveTo(x - r * 0.1, y - r * 0.35); ctx.lineTo(x + r * 0.05, y + r * 0.25);
+        ctx.strokeStyle = '#ffc21a'; ctx.lineWidth = r * 0.16; ctx.lineCap = 'round'; ctx.stroke();
+        break;
+    }
+  }
+
+  // ---------- draw city ----------
+  function drawRoad(x, y) {
+    const px = X(x), py = Y(y), s = tile;
+    ctx.fillStyle = '#596074';
+    ctx.fillRect(px, py, s + 0.5, s + 0.5);
+    ctx.fillStyle = '#ffd84a';
+    const hz = y % 2 === 0, vt = x % 2 === 0;
+    if (hz && !vt) { ctx.fillRect(px + s * 0.12, py + s * 0.48, s * 0.28, s * 0.04); ctx.fillRect(px + s * 0.6, py + s * 0.48, s * 0.28, s * 0.04); }
+    if (vt && !hz) { ctx.fillRect(px + s * 0.48, py + s * 0.12, s * 0.04, s * 0.28); ctx.fillRect(px + s * 0.48, py + s * 0.6, s * 0.04, s * 0.28); }
+  }
+
+  function drawBuilding(b) {
+    const px = X(b.x), py = Y(b.y), s = tile, c = COLORS[b.color];
+    rr(px + s * 0.04, py + s * 0.04, s * 0.92, s * 0.92, s * 0.1); ctx.fillStyle = '#efe6d2'; ctx.fill();
+    rr(px + s * 0.09, py + s * 0.09, s * 0.82, s * 0.82, s * 0.08); ctx.fillStyle = c.light; ctx.fill();
+
+    // shops that want the crate on the truck glow in its color
+    const wantsCargo = b.kind === 'shop' && truck.cargo === b.color;
+    if (wantsCargo) {
+      rr(px + s * 0.05, py + s * 0.05, s * 0.9, s * 0.9, s * 0.1);
+      ctx.lineWidth = s * 0.06; ctx.strokeStyle = c.fill;
+      ctx.globalAlpha = 0.5 + 0.4 * Math.sin(time * 6); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+
+    const k = (fx, fy) => [px + fx * s, py + fy * s];
+    if (b.kind === 'warehouse') {
+      box(...k(0.12, 0.34), s * 0.76, s * 0.54, '#f4ede0');
+      poly([...k(0.07, 0.37), ...k(0.2, 0.15), ...k(0.8, 0.15), ...k(0.93, 0.37)], c.fill);
+      box(...k(0.29, 0.2), s * 0.42, s * 0.12, '#fff8e6', s * 0.02);
+      label('LAGER', px + s * 0.5, py + s * 0.265, s * 0.1, INK, s * 0.38);
+      box(...k(0.18, 0.45), s * 0.36, s * 0.43, '#d7dbe3');
+      ctx.beginPath();
+      for (let i = 1; i < 6; i++) { ctx.moveTo(px + s * 0.18, py + s * (0.45 + i * 0.072)); ctx.lineTo(px + s * 0.54, py + s * (0.45 + i * 0.072)); }
+      ctx.lineWidth = Math.max(1, s * 0.012); ctx.strokeStyle = INK; ctx.stroke();
+      crate(px + s * 0.59, py + s * 0.66, s * 0.25, s * 0.22, b.color);
+      crate(px + s * 0.62, py + s * 0.46, s * 0.2, s * 0.2, b.color);
+    } else {
+      box(...k(0.15, 0.36), s * 0.7, s * 0.52, '#f4ede0');
+      const sw = s * 0.7 / 6;
+      for (let i = 0; i < 6; i++) {
+        ctx.fillStyle = i % 2 ? '#fff8e6' : c.fill;
+        ctx.beginPath();
+        ctx.moveTo(px + s * 0.15 + i * sw, py + s * 0.36);
+        ctx.lineTo(px + s * 0.15 + (i + 1) * sw, py + s * 0.36);
+        ctx.lineTo(px + s * 0.15 + (i + 1) * sw, py + s * 0.45);
+        ctx.arc(px + s * 0.15 + (i + 0.5) * sw, py + s * 0.45, sw / 2, 0, Math.PI);
+        ctx.closePath(); ctx.fill(); outline();
+      }
+      box(...k(0.16, 0.15), s * 0.68, s * 0.17, c.fill, s * 0.03);
+      label(b.sign, px + s * 0.5, py + s * 0.24, s * 0.12, b.color === 'yellow' ? INK : '#ffffff', s * 0.6);
+      box(...k(0.2, 0.55), s * 0.34, s * 0.27, '#ffffff');
+      icon(b.icon, px + s * 0.37, py + s * 0.685, s * 0.085);
+      box(...k(0.61, 0.56), s * 0.18, s * 0.32, c.fill, s * 0.02);
+      circle(px + s * 0.75, py + s * 0.73, s * 0.018, INK, false);
+    }
+  }
+
+  // speech bubble above the shop that has asked for a crate
+  function drawOrder() {
+    if (!order) return;
+    const s = tile, cx = X(order.x + 0.5);
+    const bob = reduce ? 0 : Math.sin(time * 3) * s * 0.04;
+    const w = s * 0.44, h = s * 0.36, by = Y(order.y) - s * 0.34 + bob;
+    poly([cx - s * 0.06, by + h - 1, cx + s * 0.06, by + h - 1, cx, by + h + s * 0.1], '#ffffff');
+    box(cx - w / 2, by, w, h, '#ffffff', h * 0.4);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(cx - s * 0.05, by + h - s * 0.03, s * 0.1, s * 0.05);
+    crate(cx - s * 0.12, by + s * 0.07, s * 0.24, s * 0.22, order.color);
+  }
+
+  function drawTruck() {
+    const s = tile * 0.95;
+    const moving = truck.path.length > 0;
+    const bob = moving && !reduce ? Math.sin(time * 18) * tile * 0.012 : 0;
+    const cx = X(truck.x + 0.5), cy = Y(truck.y + 0.5) + bob;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(truck.face, 1);
+    ctx.beginPath(); ctx.ellipse(0, s * 0.25, s * 0.48, s * 0.06, 0, 0, Math.PI * 2); ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fill();
+
+    box(-s * 0.47, s * 0.04, s * 0.92, s * 0.09, '#596074');
+    box(-s * 0.47, -s * 0.03, s * 0.62, s * 0.07, '#b5b9c7', s * 0.015);
+    if (truck.cargo) crate(-s * 0.42, -s * 0.33, s * 0.48, s * 0.3, truck.cargo);
+    else { // empty bed: show its low side rail so it reads as a lorry
+      ctx.beginPath(); ctx.moveTo(-s * 0.47, -s * 0.03); ctx.lineTo(-s * 0.47, -s * 0.1); ctx.moveTo(s * 0.12, -s * 0.03); ctx.lineTo(s * 0.12, -s * 0.1);
+      ctx.lineWidth = Math.max(1.5, s * 0.025); ctx.strokeStyle = INK; ctx.stroke();
+    }
+
+    poly([s * 0.16, -s * 0.27, s * 0.34, -s * 0.27, s * 0.47, -s * 0.1, s * 0.47, s * 0.13, s * 0.16, s * 0.13], CAB);
+    poly([s * 0.21, -s * 0.22, s * 0.32, -s * 0.22, s * 0.42, -s * 0.1, s * 0.21, -s * 0.1], '#bfe9ff');
+    if (moving) { lwScale = 0.5; drawDavidHead(s * 0.28, -s * 0.14, s * 0.042, 1); lwScale = 1; }
+    ctx.fillStyle = '#ffc21a'; ctx.fillRect(s * 0.16, -s * 0.01, s * 0.31, s * 0.03);
+    box(s * 0.43, s * 0.02, s * 0.04, s * 0.05, '#fff3b0', s * 0.01);
+
+    for (const wx of [-s * 0.33, -s * 0.13, s * 0.3]) {
+      circle(wx, s * 0.15, s * 0.09, INK);
+      circle(wx, s * 0.15, s * 0.035, '#c9ced8', false);
+    }
+    ctx.restore();
+  }
+
+  function drawDavidHead(cx, cy, r, f) {
+    circle(cx, cy + r * 0.05, r * 1.05, '#e8c46a');
+    circle(cx, cy + r * 0.12, r * 0.92, '#f6d2b8');
+    circle(cx - r * 0.5, cy + r * 0.4, r * 0.17, 'rgba(255,120,120,0.45)', false);
+    circle(cx + r * 0.5, cy + r * 0.4, r * 0.17, 'rgba(255,120,120,0.45)', false);
+    circle(cx - r * 0.33, cy + r * 0.12, r * 0.1, INK, false);
+    circle(cx + r * 0.33, cy + r * 0.12, r * 0.1, INK, false);
+    ctx.beginPath(); ctx.arc(cx, cy + r * 0.3, r * 0.3, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.lineWidth = Math.max(1, r * 0.12); ctx.strokeStyle = INK; ctx.lineCap = 'round'; ctx.stroke();
+    // red cap with the brim toward where he is looking
+    ctx.beginPath(); ctx.ellipse(cx + f * r * 0.85, cy - r * 0.3, r * 0.75, r * 0.2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#e8352b'; ctx.fill(); outline();
+    ctx.beginPath(); ctx.arc(cx, cy - r * 0.3, r * 0.95, Math.PI, 0); ctx.closePath();
+    ctx.fillStyle = '#e8352b'; ctx.fill(); outline();
+    circle(cx, cy - r * 1.2, r * 0.14, '#fff8e6', false);
+  }
+
+  function limb(x1, y1, x2, y2, w) {
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.strokeStyle = INK; ctx.lineWidth = w + Math.max(2, tile * 0.03); ctx.stroke();
+    ctx.strokeStyle = '#ff8a1c'; ctx.lineWidth = w; ctx.stroke();
+    circle(x2, y2, w * 0.55, '#f6d2b8', false);
+  }
+
+  function drawDavid() {
+    if (truck.path.length) return; // he rides in the cab while driving
+    const u = tile * DAVID, f = truck.face, d = davidSpot();
+    const jump = davidJump > 0 && !reduce ? Math.abs(Math.sin(davidJump * 8)) * tile * 0.12 : 0;
+    const fx = X(d.x), fy = Y(d.y) - jump;
+    const lifting = flights.length > 0;
+    const waving = davidJump > 0 || (!lifting && Math.sin(time * 1.3) > 0.6);
+
+    ctx.beginPath(); ctx.ellipse(fx, Y(d.y), u * 0.2, u * 0.05, 0, 0, Math.PI * 2); ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fill();
+
+    // blue trousers and his blue socks
+    for (const sx of [-1, 1]) {
+      box(fx + sx * 0.075 * u - 0.055 * u, fy - 0.34 * u, 0.11 * u, 0.28 * u, '#3b4a7a');
+      box(fx + sx * 0.08 * u - 0.07 * u, fy - 0.08 * u, 0.14 * u, 0.08 * u, '#4aa3d8', 0.03 * u);
+    }
+
+    // orange driver's vest with reflective stripes
+    box(fx - 0.17 * u, fy - 0.66 * u, 0.34 * u, 0.36 * u, '#ff8a1c', 0.06 * u);
+    ctx.fillStyle = '#e9f53a';
+    ctx.fillRect(fx - 0.17 * u, fy - 0.57 * u, 0.34 * u, 0.045 * u);
+    ctx.fillRect(fx - 0.17 * u, fy - 0.45 * u, 0.34 * u, 0.045 * u);
+
+    // grey blankie tucked into his belt
+    for (const [bx, by, br] of [[-0.13, -0.36, 0.07], [-0.07, -0.3, 0.06], [-0.15, -0.27, 0.055]]) {
+      circle(fx + f * bx * u, fy + by * u, br * u, '#cfd0d6');
+    }
+
+    const sh = fy - 0.6 * u;
+    if (lifting) {
+      limb(fx - 0.12 * u, sh, fx - 0.2 * u, fy - 0.95 * u, 0.08 * u);
+      limb(fx + 0.12 * u, sh, fx + 0.2 * u, fy - 0.95 * u, 0.08 * u);
+    } else {
+      limb(fx - 0.14 * u, sh, fx - 0.22 * u, fy - 0.38 * u, 0.08 * u);
+      if (waving) limb(fx + 0.14 * u, sh, fx + 0.24 * u + Math.sin(time * 10) * 0.08 * u, fy - 0.92 * u, 0.08 * u);
+      else limb(fx + 0.14 * u, sh, fx + 0.22 * u, fy - 0.38 * u, 0.08 * u);
+    }
+
+    drawDavidHead(fx, fy - 0.8 * u, 0.15 * u, f);
+  }
+
+  function drawFlights() {
+    for (const f of flights) {
+      const t = Math.min(1, f.t / f.dur);
+      const x = f.from.x + (f.to.x - f.from.x) * t;
+      const y = f.from.y + (f.to.y - f.from.y) * t - Math.sin(Math.PI * t) * 0.6;
+      crate(X(x) - tile * 0.15, Y(y) - tile * 0.13, tile * 0.3, tile * 0.26, f.color);
+    }
+  }
+
+  function heart(x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + r * 0.9);
+    ctx.bezierCurveTo(x - r * 1.3, y + r * 0.1, x - r * 0.7, y - r, x, y - r * 0.35);
+    ctx.bezierCurveTo(x + r * 0.7, y - r, x + r * 1.3, y + r * 0.1, x, y + r * 0.9);
+    ctx.fill();
+  }
+
+  function drawParticles() {
+    for (const p of parts) {
+      const x = X(p.x), y = Y(p.y), a = Math.max(0, p.life / p.max);
+      switch (p.kind) {
+        case 'spark': ctx.globalAlpha = a; circle(x, y, tile * 0.04, '#ffc21a', false); ctx.globalAlpha = 1; break;
+        case 'heart': ctx.globalAlpha = a; ctx.fillStyle = '#ff5c8a'; heart(x, y, tile * 0.08); ctx.globalAlpha = 1; break;
+        case 'confetti':
+          ctx.save(); ctx.globalAlpha = Math.min(1, a * 2); ctx.translate(x, y); ctx.rotate(p.rot);
+          ctx.fillStyle = p.color; ctx.fillRect(-tile * 0.05, -tile * 0.025, tile * 0.1, tile * 0.05); ctx.restore();
+          break;
+      }
+    }
+  }
+
+  function drawTexts() {
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const t of texts) {
+      const age = 1 - t.life / t.max;
+      const scale = age < 0.15 ? age / 0.15 : 1;
+      ctx.globalAlpha = Math.min(1, t.life / 0.4);
+      ctx.font = `800 ${tile * 0.32 * scale}px ${FONT}`;
+      ctx.lineWidth = tile * 0.08; ctx.strokeStyle = '#ffffff'; ctx.lineJoin = 'round';
+      ctx.strokeText(t.text, X(t.x), Y(t.y));
+      ctx.fillStyle = t.color; ctx.fillText(t.text, X(t.x), Y(t.y));
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // speech bubble over David's head (over the cab while he drives); flips below him near the top edge
+  function drawSpeech() {
+    if (!speech) return;
+    const d = davidSpot(), moving = truck.path.length > 0;
+    const ax = moving ? X(truck.x + 0.5 + truck.face * 0.27) : X(d.x);
+    const top = moving ? Y(truck.y + 0.5) - tile * 0.32 : Y(d.y) - tile * DAVID * 1.12;
+    const fs = Math.max(14, tile * 0.24);
+    ctx.font = `800 ${fs}px ${FONT}`;
+    const w = Math.min(ctx.measureText(speech.text).width + fs * 1.2, W - 8), h = fs * 1.7, tail = fs * 0.7;
+    const above = top - tail - h >= 4;
+    const ay = above ? top : (moving ? Y(truck.y + 0.5) + tile * 0.3 : Y(d.y) + tile * 0.06);
+    const by = above ? ay - tail - h : ay + tail;
+    const bx = Math.min(Math.max(ax - w / 2, 4), W - w - 4);
+    const edge = above ? by + h : by;
+    const tx = Math.min(Math.max(ax - tail * 0.45, bx + h * 0.4), bx + w - h * 0.4 - tail * 0.9);
+    const age = 1 - speech.life / speech.max;
+    const sc = reduce ? 1 : Math.min(1, 0.4 + age / 0.06 * 0.6);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, speech.life / 0.3);
+    ctx.translate(ax, ay); ctx.scale(sc, sc); ctx.translate(-ax, -ay);
+    poly([tx, edge, tx + tail * 0.9, edge, ax, ay], '#ffffff');
+    box(bx, by, w, h, '#ffffff', h * 0.45);
+    // hide the bubble's border where the tail joins it
+    const lw = ctx.lineWidth, dir = above ? -1 : 1;
+    ctx.beginPath(); ctx.moveTo(tx + lw, edge + dir * lw); ctx.lineTo(tx + tail * 0.9 - lw, edge + dir * lw); ctx.lineTo(ax, ay + dir * lw * 2.5);
+    ctx.closePath(); ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.fillStyle = INK; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(speech.text, bx + w / 2, by + h / 2 + fs * 0.06, w - fs * 0.8);
+    ctx.restore();
+  }
+
+  function drawPointer() {
+    if (idleT < 3) return;
+    const best = goal();
+    if (!best) return;
+    const s = tile, cx = X(best.x + 0.5);
+    const top = Y(best.y) + s * 0.1 - (reduce ? 0 : Math.abs(Math.sin(time * 5)) * s * 0.15);
+    poly([cx - s * 0.1, top - s * 0.34, cx + s * 0.1, top - s * 0.34, cx + s * 0.1, top - s * 0.17, cx + s * 0.2, top - s * 0.17, cx, top + s * 0.04, cx - s * 0.2, top - s * 0.17, cx - s * 0.1, top - s * 0.17], '#ffc21a');
+  }
+
+  function draw() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#8fd16a';
+    ctx.fillRect(0, 0, W, H);
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) if (isRoad(x, y)) drawRoad(x, y);
+    for (const b of buildings) drawBuilding(b);
+    drawTruck();
+    drawDavid();
+    drawFlights();
+    drawParticles();
+    drawOrder();
+    drawTexts();
+    drawPointer();
+    drawSpeech();
+  }
+
+  // ---------- sound ----------
+  let ac = null, master = null, muted = false, engine = null;
+  function ensureAudio() {
+    if (!ac) {
+      const C = window.AudioContext || window.webkitAudioContext;
+      if (!C) return null;
+      try { ac = new C(); } catch (e) { return null; }
+      master = ac.createGain();
+      master.gain.value = muted ? 0 : 0.8;
+      master.connect(ac.destination);
+    }
+    if (ac.state === 'suspended') ac.resume();
+    return ac;
+  }
+  function beep(freq, dur, { type = 'sine', vol = 0.2, delay = 0, to = null } = {}) {
+    if (!ac) return;
+    const t0 = ac.currentTime + delay;
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    if (to) o.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(master);
+    o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+  // a soft low engine rumble while the lorry drives
+  function setEngine(on) {
+    if (!ac) return;
+    if (on && !engine) {
+      const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = 'sawtooth'; o.frequency.value = 60;
+      f.type = 'lowpass'; f.frequency.value = 280;
+      g.gain.value = 0; g.gain.setTargetAtTime(0.07, ac.currentTime, 0.08);
+      o.connect(f).connect(g).connect(master); o.start();
+      engine = { o, g };
+    } else if (!on && engine) {
+      engine.g.gain.setTargetAtTime(0, ac.currentTime, 0.08);
+      engine.o.stop(ac.currentTime + 0.5);
+      engine = null;
+    }
+    if (engine) engine.o.frequency.setTargetAtTime(62 + Math.sin(time * 9) * 5, ac.currentTime, 0.05);
+  }
+  // David's voice: only with a Danish system voice, since other voices mangle Danish words
+  const synth = window.speechSynthesis;
+  let daVoice = null;
+  function pickVoice() {
+    const voices = synth.getVoices();
+    daVoice = voices.find(v => /^da/i.test(v.lang) && v.localService) || voices.find(v => /^da/i.test(v.lang)) || null;
+  }
+  if (synth) { pickVoice(); synth.onvoiceschanged = pickVoice; }
+  function speak(text) {
+    if (!synth || !daVoice || muted) return;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.voice = daVoice; u.lang = daVoice.lang;
+    u.pitch = 1.6; u.rate = 1.05;
+    synth.speak(u);
+  }
+
+  // ---------- input ----------
+  cv.addEventListener('pointerdown', e => {
+    ensureAudio();
+    const r = cv.getBoundingClientRect();
+    const tx = Math.floor((e.clientX - r.left - ox) / tile), ty = Math.floor((e.clientY - r.top - oy) / tile);
+    if (tx < 0 || ty < 0 || tx >= cols || ty >= rows) return;
+    if (!truck.path.length && tx === truck.x && ty === truck.y) { honk(); return; }
+    sendTo(tx, ty);
+  });
+  document.getElementById('honkBtn').addEventListener('click', honk);
+  soundBtn.addEventListener('click', () => {
+    ensureAudio();
+    muted = !muted;
+    if (master) master.gain.setTargetAtTime(muted ? 0 : 0.8, ac.currentTime, 0.02);
+    if (muted && synth) synth.cancel();
+    document.getElementById('iconOn').hidden = muted;
+    document.getElementById('iconOff').hidden = !muted;
+    soundBtn.setAttribute('aria-label', muted ? 'Slå lyden til' : 'Slå lyden fra');
+  });
+  const KEYS = { arrowup: [0, -1], arrowdown: [0, 1], arrowleft: [-1, 0], arrowright: [1, 0], w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0] };
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (KEYS[k]) {
+      e.preventDefault(); ensureAudio();
+      heldDir = KEYS[k];
+      truck.path = truck.path.slice(0, 1);
+      truck.target = null;
+    } else if (k === ' ' && e.target === document.body) { e.preventDefault(); honk(); }
+  });
+  window.addEventListener('keyup', e => { if (KEYS[e.key.toLowerCase()] === heldDir) heldDir = null; });
+
+  // ---------- loop ----------
+  function resize() {
+    const r = wrap.getBoundingClientRect();
+    W = r.width; H = r.height;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const land = W >= H;
+    if (land !== landscape) { landscape = land; buildCity(); }
+    tile = Math.min(W / cols, H / rows);
+    ox = (W - cols * tile) / 2; oy = (H - rows * tile) / 2;
+  }
+  let last = 0;
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000 || 0);
+    last = now;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  function start(data) {
+    stars = +(data && data.stars) || 0;
+    starCount.textContent = stars;
+    if (stars > 0) { hintStage = 2; hintEl.hidden = true; }
+    resize();
+    texts.push({ text: 'Hej David!', x: truck.x + 0.5, y: truck.y - 0.2, life: 3, max: 3, color: CAB });
+    new ResizeObserver(resize).observe(wrap);
+    requestAnimationFrame(loop);
+  }
+  const hot = window.claude && window.claude.hot;
+  if (hot && typeof hot.snapshot === 'function') hot.snapshot(() => ({ stars }));
+  if (hot && typeof hot.ready === 'function') hot.ready(start); else start((hot && hot.data) || {});
+})();
+</script>
+
+<script>
+// The house button leads back to the game menu, but only on the games site (not inside a claude.ai preview).
+if (/\/(firetruck|lorry)\/(index\.html)?$/.test(location.pathname)) document.getElementById('homeBtn').hidden = false;
+</script>
