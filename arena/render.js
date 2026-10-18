@@ -1,24 +1,29 @@
 // Drawing for Arena. Works in tile units: the canvas transform maps one tile to `scale` CSS pixels,
 // centred on the camera. Everything outside the player's line of sight is shaded dark, and enemies
 // there are not drawn at all, which gives the top-down view its first-person tension.
+// For speed, the static map is drawn once into an offscreen image, robots are pre-drawn sprites,
+// and the sight polygon is only recomputed when the viewpoint moves.
 
-import { MAP, MAP_W, MAP_H, isWall, lineOfSight, STANDS, TEAMS, RELOAD } from './sim.js';
+import { MAP, MAP_W, MAP_H, isWall, lineOfSight, STANDS, TEAMS, BLASTER, BODY } from './sim.js';
 
 export const TEAM_COLOR = { red: '#ff4d7e', blue: '#3fd4ff' };
-const TEAM_DARK = { red: '#5a1630', blue: '#0f4257' };
+const TEAM_LIGHT = { red: '#ffc2d3', blue: '#c8f4ff' };
+const TEAM_DARK = { red: '#6b1733', blue: '#0e4a63' };
+const TEAM_RGB = { red: '255, 77, 126', blue: '63, 212, 255' };
+const WEAPON_COLOR = { blaster: '#ffffff', lightning: '#b9a6ff', rocket: '#ffa53d', grenade: '#7dff9a' };
 const FLOOR = '#0b1222';
-const GRID = 'rgba(80, 120, 200, 0.07)';
+const OUTSIDE = '#121c35';
 const WALL = '#1a2644';
 const WALL_TOP = '#22325a';
-const EDGE = 'rgba(120, 170, 255, 0.55)';
-const SHADE = 'rgba(3, 5, 12, 0.74)';
-const VIEW_W = 30, VIEW_H = 18; // the most of the map anyone can see at once, in tiles
+const EDGE = 'rgba(120, 170, 255, 0.5)';
+const SHADE = 'rgba(3, 5, 12, 0.72)';
+const VIEW_W = 40, VIEW_H = 24; // the most of the map anyone can see at once, in tiles
+const MAX_TILE_PX = 64;         // cap for the cached map image's resolution
 
 // Wall outlines as long straight segments, used both for sight rays and for the glowing edges.
 const SEGMENTS = (() => {
   const segs = [];
   const floor = (x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H && !isWall(x, y);
-  // Horizontal edges: a wall tile with floor above (edge at y) or below (edge at y+1).
   for (const [dy, off] of [[-1, 0], [1, 1]]) {
     for (let y = 0; y < MAP_H; y++) {
       let start = null;
@@ -41,34 +46,52 @@ const SEGMENTS = (() => {
   }
   return segs;
 })();
+const EDGE_PATH = (() => {
+  const p = new Path2D();
+  for (const [x1, y1, x2, y2] of SEGMENTS) { p.moveTo(x1, y1); p.lineTo(x2, y2); }
+  return p;
+})();
 
+// Sight polygon: rays just either side of every wall corner in view, each stopped by the nearest wall.
+// Segments are kept in one flat typed array, since this runs whenever the viewpoint moves.
+const SEG_BUF = new Float64Array((SEGMENTS.length + 4) * 4);
 function visibility(ox, oy, view) {
-  const segs = SEGMENTS.filter(([x1, y1, x2, y2]) =>
-    Math.max(x1, x2) >= view.x0 && Math.min(x1, x2) <= view.x1 && Math.max(y1, y2) >= view.y0 && Math.min(y1, y2) <= view.y1);
   const { x0, y0, x1, y1 } = view;
-  segs.push([x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]);
-  const angles = [];
-  for (const [ax, ay, bx, by] of segs) {
-    for (const [px, py] of [[ax, ay], [bx, by]]) {
+  let n = 0;
+  const add = (ax, ay, bx, by) => { SEG_BUF[n++] = ax; SEG_BUF[n++] = ay; SEG_BUF[n++] = bx - ax; SEG_BUF[n++] = by - ay; };
+  for (const s of SEGMENTS) {
+    if (Math.max(s[0], s[2]) >= x0 && Math.min(s[0], s[2]) <= x1 && Math.max(s[1], s[3]) >= y0 && Math.min(s[1], s[3]) <= y1) add(s[0], s[1], s[2], s[3]);
+  }
+  add(x0, y0, x1, y0); add(x1, y0, x1, y1); add(x1, y1, x0, y1); add(x0, y1, x0, y0);
+  const seen = new Set(), angles = [];
+  for (let i = 0; i < n; i += 4) {
+    for (const [px, py] of [[SEG_BUF[i], SEG_BUF[i + 1]], [SEG_BUF[i] + SEG_BUF[i + 2], SEG_BUF[i + 1] + SEG_BUF[i + 3]]]) {
+      const key = px * 4096 + py;
+      if (seen.has(key)) continue;
+      seen.add(key);
       const a = Math.atan2(py - oy, px - ox);
-      angles.push(a - 1e-4, a, a + 1e-4);
+      angles.push(a - 1e-4, a + 1e-4);
     }
   }
   angles.sort((a, b) => a - b);
-  const pts = [];
+  const pts = new Array(angles.length * 2);
+  let m = 0;
   for (const a of angles) {
     const dx = Math.cos(a), dy = Math.sin(a);
     let best = Infinity;
-    for (const [sx1, sy1, sx2, sy2] of segs) {
-      const sx = sx2 - sx1, sy = sy2 - sy1;
+    for (let i = 0; i < n; i += 4) {
+      const sx = SEG_BUF[i + 2], sy = SEG_BUF[i + 3];
       const den = dx * sy - dy * sx;
-      if (Math.abs(den) < 1e-12) continue;
-      const t = ((sx1 - ox) * sy - (sy1 - oy) * sx) / den;
-      const u = ((sx1 - ox) * dy - (sy1 - oy) * dx) / den;
-      if (t > 0 && u >= -1e-9 && u <= 1 + 1e-9 && t < best) best = t;
+      if (den > -1e-12 && den < 1e-12) continue;
+      const ax = SEG_BUF[i] - ox, ay = SEG_BUF[i + 1] - oy;
+      const t = (ax * sy - ay * sx) / den;
+      if (t <= 0 || t >= best) continue;
+      const u = (ax * dy - ay * dx) / den;
+      if (u >= -1e-9 && u <= 1 + 1e-9) best = t;
     }
-    if (best < Infinity) pts.push(ox + dx * best, oy + dy * best);
+    if (best < Infinity) { pts[m++] = ox + dx * best; pts[m++] = oy + dy * best; }
   }
+  pts.length = m;
   return pts;
 }
 
@@ -84,20 +107,88 @@ const miniMap = (() => {
   return c;
 })();
 
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w)); c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
   let W = 0, H = 0, dpr = 1, scale = 40;
+  let mapImg = null, mapPx = 0, balls = {}, glows = {}, vignette = null, quality = 1;
   let cam = { x: MAP_W / 2, y: MAP_H / 2 };
   const parts = [];
-  let shake = 0, flashA = 0, flashColor = '#ff2a4a', markerT = 0, markerKill = false;
+  let shake = 0, flashA = 0, markerT = 0, markerKill = false;
   const meScreen = { x: 0, y: 0 };
+  let visKey = '', visPoly = [];
+
+  function buildMap() {
+    mapPx = Math.min(MAX_TILE_PX, Math.ceil(scale * dpr));
+    mapImg = makeCanvas(MAP_W * mapPx, MAP_H * mapPx);
+    const m = mapImg.getContext('2d');
+    m.scale(mapPx, mapPx);
+    m.fillStyle = FLOOR;
+    m.fillRect(0, 0, MAP_W, MAP_H);
+    for (const t of TEAMS) {
+      const s = STANDS[t];
+      const g = m.createRadialGradient(s.x, s.y, 0, s.x, s.y, 7);
+      g.addColorStop(0, `rgba(${TEAM_RGB[t]}, 0.16)`);
+      g.addColorStop(1, `rgba(${TEAM_RGB[t]}, 0)`);
+      m.fillStyle = g;
+      m.fillRect(s.x - 7, s.y - 7, 14, 14);
+    }
+    m.strokeStyle = 'rgba(80, 120, 200, 0.08)';
+    m.lineWidth = 0.03;
+    m.beginPath();
+    for (let x = 0; x <= MAP_W; x++) { m.moveTo(x, 0); m.lineTo(x, MAP_H); }
+    for (let y = 0; y <= MAP_H; y++) { m.moveTo(0, y); m.lineTo(MAP_W, y); }
+    m.stroke();
+    for (let y = 0; y < MAP_H; y++) for (let x = 0; x < MAP_W; x++) {
+      if (!isWall(x, y)) continue;
+      m.fillStyle = WALL; m.fillRect(x, y, 1, 1);
+      m.fillStyle = WALL_TOP; m.fillRect(x + 0.12, y + 0.12, 0.76, 0.76);
+    }
+  }
+
+  // Each robot is a glossy ball in its team colour, pre-drawn once per size.
+  function buildSprites() {
+    const px = Math.ceil(BODY * 2 * scale * dpr) + 4;
+    for (const t of TEAMS) {
+      const c = makeCanvas(px, px), b = c.getContext('2d'), r = px / 2 - 2;
+      const g = b.createRadialGradient(px / 2 - r * 0.35, px / 2 - r * 0.4, r * 0.1, px / 2, px / 2, r);
+      g.addColorStop(0, TEAM_LIGHT[t]);
+      g.addColorStop(0.45, TEAM_COLOR[t]);
+      g.addColorStop(1, TEAM_DARK[t]);
+      b.fillStyle = g;
+      b.beginPath(); b.arc(px / 2, px / 2, r, 0, Math.PI * 2); b.fill();
+      b.lineWidth = Math.max(1, r * 0.08); b.strokeStyle = 'rgba(3, 5, 12, 0.8)'; b.stroke();
+      balls[t] = c;
+      const gs = Math.ceil(2.8 * scale * dpr);
+      const gc = makeCanvas(gs, gs), gx = gc.getContext('2d');
+      const gg = gx.createRadialGradient(gs / 2, gs / 2, 0, gs / 2, gs / 2, gs / 2);
+      gg.addColorStop(0, `rgba(${TEAM_RGB[t]}, 0.45)`);
+      gg.addColorStop(1, `rgba(${TEAM_RGB[t]}, 0)`);
+      gx.fillStyle = gg; gx.fillRect(0, 0, gs, gs);
+      glows[t] = gc;
+    }
+    vignette = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(255, 42, 74, 1)');
+  }
 
   function resize() {
     const r = canvas.getBoundingClientRect();
     W = r.width; H = r.height;
     dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Keep the canvas under about 5 million pixels so big, sharp screens stay smooth.
+    if (W * H * dpr * dpr > 5e6) dpr = Math.max(1, Math.sqrt(5e6 / (W * H)));
+    dpr *= quality;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     scale = Math.max(W / VIEW_W, H / VIEW_H);
+    buildMap();
+    buildSprites();
+    visKey = '';
   }
 
   const toScreen = (x, y) => ({ x: (x - cam.x) * scale + W / 2, y: (y - cam.y) * scale + H / 2 });
@@ -106,71 +197,26 @@ export function createRenderer(canvas) {
     spark(x, y, color, n = 8, speed = 6) {
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2, v = speed * (0.3 + Math.random());
-        parts.push({ kind: 'spark', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.35, max: 0.35, color });
+        parts.push({ kind: 'spark', x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 0.35, max: 0.35, color, size: 0.06 });
       }
     },
     ring(x, y, color, size = 1.5) { parts.push({ kind: 'ring', x, y, life: 0.45, max: 0.45, color, size }); },
     burst(x, y, color) { fx.spark(x, y, color, 22, 9); fx.ring(x, y, color, 2.2); },
+    boom(x, y, r, color) {
+      parts.push({ kind: 'boom', x, y, life: 0.4, max: 0.4, size: r, color });
+      fx.spark(x, y, '#ffd166', 18, 10);
+      fx.spark(x, y, color, 10, 7);
+    },
+    smoke(x, y) { parts.push({ kind: 'smoke', x, y, vx: (Math.random() - 0.5) * 0.6, vy: (Math.random() - 0.5) * 0.6, life: 0.5, max: 0.5, size: 0.12 }); },
     shake(a) { shake = Math.max(shake, a); },
-    flash(color, a = 0.35) { flashColor = color; flashA = Math.max(flashA, a); },
+    flash(a = 0.35) { flashA = Math.max(flashA, a); },
     marker(kill = false) { markerT = 0.18; markerKill = kill; },
   };
 
   // ---------- pieces ----------
-  function drawFloor(v) {
-    ctx.fillStyle = FLOOR;
-    ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, v.y1 - v.y0);
-    for (const t of TEAMS) {
-      const s = STANDS[t];
-      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, 7);
-      g.addColorStop(0, t === 'red' ? 'rgba(255, 77, 126, 0.16)' : 'rgba(63, 212, 255, 0.16)');
-      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(s.x - 7, s.y - 7, 14, 14);
-    }
-    ctx.strokeStyle = GRID;
-    ctx.lineWidth = 0.03;
-    ctx.beginPath();
-    for (let x = Math.max(0, Math.floor(v.x0)); x <= Math.min(MAP_W, Math.ceil(v.x1)); x++) { ctx.moveTo(x, v.y0); ctx.lineTo(x, v.y1); }
-    for (let y = Math.max(0, Math.floor(v.y0)); y <= Math.min(MAP_H, Math.ceil(v.y1)); y++) { ctx.moveTo(v.x0, y); ctx.lineTo(v.x1, y); }
-    ctx.stroke();
-  }
-
-  function drawWalls(v) {
-    const xa = Math.max(0, Math.floor(v.x0)), xb = Math.min(MAP_W - 1, Math.ceil(v.x1));
-    const ya = Math.max(0, Math.floor(v.y0)), yb = Math.min(MAP_H - 1, Math.ceil(v.y1));
-    // Outside the map counts as wall too.
-    ctx.fillStyle = WALL;
-    if (v.x0 < 0) ctx.fillRect(v.x0, v.y0, -v.x0, v.y1 - v.y0);
-    if (v.y0 < 0) ctx.fillRect(v.x0, v.y0, v.x1 - v.x0, -v.y0);
-    if (v.x1 > MAP_W) ctx.fillRect(MAP_W, v.y0, v.x1 - MAP_W, v.y1 - v.y0);
-    if (v.y1 > MAP_H) ctx.fillRect(v.x0, MAP_H, v.x1 - v.x0, v.y1 - MAP_H);
-    for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) {
-      if (!isWall(x, y)) continue;
-      ctx.fillStyle = WALL;
-      ctx.fillRect(x, y, 1.02, 1.02);
-      ctx.fillStyle = WALL_TOP;
-      ctx.fillRect(x + 0.12, y + 0.12, 0.76, 0.76);
-    }
-  }
-
-  function drawEdges(v, alpha) {
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = EDGE;
-    ctx.lineWidth = 0.06;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (const [x1, y1, x2, y2] of SEGMENTS) {
-      if (Math.max(x1, x2) < v.x0 || Math.min(x1, x2) > v.x1 || Math.max(y1, y2) < v.y0 || Math.min(y1, y2) > v.y1) continue;
-      ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-
   function drawStand(team, time) {
-    const s = STANDS[team], c = TEAM_COLOR[team];
-    ctx.strokeStyle = c;
+    const s = STANDS[team];
+    ctx.strokeStyle = TEAM_COLOR[team];
     ctx.lineWidth = 0.08;
     ctx.globalAlpha = 0.5 + 0.2 * Math.sin(time * 3);
     ctx.beginPath(); ctx.arc(s.x, s.y, 1, 0, Math.PI * 2); ctx.stroke();
@@ -181,18 +227,12 @@ export function createRenderer(canvas) {
   }
 
   function drawFlag(x, y, team, time, small = false) {
-    const c = TEAM_COLOR[team], k = small ? 0.6 : 1;
-    if (!small) {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, 1.4);
-      g.addColorStop(0, team === 'red' ? 'rgba(255, 77, 126, 0.45)' : 'rgba(63, 212, 255, 0.45)');
-      g.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(x, y, 1.4, 0, Math.PI * 2); ctx.fill();
-    }
+    const k = small ? 0.6 : 1;
+    if (!small) ctx.drawImage(glows[team], x - 1.4, y - 1.4, 2.8, 2.8);
     const wave = Math.sin(time * 6) * 0.06;
     ctx.strokeStyle = '#e8eeff'; ctx.lineWidth = 0.07 * k;
     ctx.beginPath(); ctx.moveTo(x - 0.15 * k, y + 0.45 * k); ctx.lineTo(x - 0.15 * k, y - 0.5 * k); ctx.stroke();
-    ctx.fillStyle = c;
+    ctx.fillStyle = TEAM_COLOR[team];
     ctx.beginPath();
     ctx.moveTo(x - 0.15 * k, y - 0.5 * k);
     ctx.quadraticCurveTo(x + 0.15 * k, y - 0.42 * k + wave, x + 0.45 * k, y - 0.3 * k);
@@ -200,53 +240,73 @@ export function createRenderer(canvas) {
     ctx.closePath(); ctx.fill();
   }
 
-  function drawRobot(p, time, isMe) {
-    const c = TEAM_COLOR[p.team];
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-    ctx.beginPath(); ctx.ellipse(0.06, 0.1, 0.42, 0.36, 0, 0, Math.PI * 2); ctx.fill();
+  function drawBall(p, time, isMe) {
+    const r = BODY;
     if (isMe) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)'; ctx.lineWidth = 0.04;
-      ctx.beginPath(); ctx.arc(0, 0, 0.55, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; ctx.lineWidth = 0.04;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 0.56, 0, Math.PI * 2); ctx.stroke();
     }
-    ctx.rotate(p.aim);
-    // Blaster barrel.
-    ctx.fillStyle = '#c9d4ee';
-    ctx.fillRect(0.1, -0.08, 0.5, 0.16);
-    ctx.fillStyle = c;
-    ctx.fillRect(0.5, -0.08, 0.1, 0.16);
-    // Side treads.
-    ctx.fillStyle = '#2a3554';
-    ctx.fillRect(-0.3, -0.42, 0.55, 0.14);
-    ctx.fillRect(-0.3, 0.28, 0.55, 0.14);
-    // Body.
-    ctx.fillStyle = TEAM_DARK[p.team];
-    ctx.strokeStyle = c; ctx.lineWidth = 0.07;
-    ctx.beginPath(); ctx.arc(0, 0, 0.34, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    // Visor pointing where it aims.
-    ctx.fillStyle = c;
-    ctx.beginPath(); ctx.arc(0.08, 0, 0.15, -1.1, 1.1); ctx.lineTo(0.08, 0); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(0.16, 0, 0.045, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    if (p.carrying) drawFlag(p.x - 0.1, p.y - 0.35, p.team === 'red' ? 'blue' : 'red', time, true);
+    ctx.drawImage(balls[p.team], p.x - r - 2 / (scale * dpr), p.y - r - 2 / (scale * dpr), 2 * r + 4 / (scale * dpr), 2 * r + 4 / (scale * dpr));
+    // A small dot shows where the ball aims, coloured by the weapon in hand.
+    const ax = p.x + Math.cos(p.aim) * r * 0.62, ay = p.y + Math.sin(p.aim) * r * 0.62;
+    ctx.fillStyle = 'rgba(3, 5, 12, 0.8)';
+    ctx.beginPath(); ctx.arc(ax, ay, 0.105, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = WEAPON_COLOR[p.weapon] || '#ffffff';
+    ctx.beginPath(); ctx.arc(ax, ay, 0.07, 0, Math.PI * 2); ctx.fill();
+    if (p.carrying) drawFlag(p.x - 0.05, p.y - 0.42, p.team === 'red' ? 'blue' : 'red', time, true);
     if (p.shield) {
-      ctx.strokeStyle = c; ctx.lineWidth = 0.05; ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = TEAM_COLOR[p.team]; ctx.lineWidth = 0.05; ctx.globalAlpha = 0.6;
       ctx.setLineDash([0.18, 0.12]);
-      ctx.beginPath(); ctx.arc(p.x, p.y, 0.58, time * 2, time * 2 + Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, p.y, 0.6, time * 2, time * 2 + Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
   }
 
-  function drawShot(s) {
+  function drawShot(s, time, dt) {
     const len = Math.hypot(s.vx, s.vy) || 1, ux = s.vx / len, uy = s.vy / len;
+    const c = TEAM_COLOR[s.team];
+    if (s.kind === 'rocket') {
+      if (Math.random() < dt * 40) fx.smoke(s.x - ux * 0.35, s.y - uy * 0.35);
+      ctx.globalAlpha = 0.35; ctx.fillStyle = '#ffa53d';
+      ctx.beginPath(); ctx.arc(s.x, s.y, 0.32, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = c; ctx.lineWidth = 0.2; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(s.x - ux * 0.3, s.y - uy * 0.3); ctx.lineTo(s.x + ux * 0.1, s.y + uy * 0.1); ctx.stroke();
+      ctx.fillStyle = '#fff3c4';
+      ctx.beginPath(); ctx.arc(s.x + ux * 0.12, s.y + uy * 0.12, 0.07, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
+    if (s.kind === 'grenade') {
+      ctx.fillStyle = '#2b3550'; ctx.strokeStyle = c; ctx.lineWidth = 0.05;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 0.17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = Math.sin(time * 30) > 0 ? '#7dff9a' : c;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 0.07, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
     const tail = Math.min(0.9, s.dist == null ? 0.9 : s.dist);
     ctx.lineCap = 'round';
-    ctx.strokeStyle = TEAM_COLOR[s.team]; ctx.globalAlpha = 0.35; ctx.lineWidth = 0.22;
+    ctx.strokeStyle = c; ctx.globalAlpha = 0.35; ctx.lineWidth = 0.22;
     ctx.beginPath(); ctx.moveTo(s.x - ux * tail, s.y - uy * tail); ctx.lineTo(s.x, s.y); ctx.stroke();
     ctx.globalAlpha = 1; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 0.07;
     ctx.beginPath(); ctx.moveTo(s.x - ux * tail * 0.8, s.y - uy * tail * 0.8); ctx.lineTo(s.x, s.y); ctx.stroke();
+  }
+
+  // Lightning: a fresh jagged line every frame from the muzzle to where the beam stops.
+  function drawBeam(b) {
+    const dx = b.x2 - b.x1, dy = b.y2 - b.y1, len = Math.hypot(dx, dy);
+    if (len < 0.05) return;
+    const nx = -dy / len, ny = dx / len, n = Math.max(2, Math.ceil(len / 0.45));
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const k = i / n, j = i === 0 || i === n ? 0 : (Math.random() - 0.5) * 0.35;
+      pts.push(b.x1 + dx * k + nx * j, b.y1 + dy * k + ny * j);
+    }
+    const line = () => { ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]); ctx.stroke(); };
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = TEAM_COLOR[b.team]; ctx.globalAlpha = 0.4; ctx.lineWidth = 0.28; line();
+    ctx.globalAlpha = 1; ctx.strokeStyle = '#e9e4ff'; ctx.lineWidth = 0.07; line();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(b.x2, b.y2, 0.12 + Math.random() * 0.08, 0, Math.PI * 2); ctx.fill();
   }
 
   function drawParts(dt) {
@@ -259,7 +319,17 @@ export function createRenderer(canvas) {
       if (p.kind === 'spark') {
         p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.9; p.vy *= 0.9;
         ctx.fillStyle = p.color;
-        ctx.fillRect(p.x - 0.05, p.y - 0.05, 0.1, 0.1);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+      } else if (p.kind === 'smoke') {
+        p.x += p.vx * dt; p.y += p.vy * dt;
+        ctx.globalAlpha = a * 0.4; ctx.fillStyle = '#9aa6c4';
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size + (1 - a) * 0.25, 0, Math.PI * 2); ctx.fill();
+      } else if (p.kind === 'boom') {
+        const r = p.size * (0.35 + 0.65 * (1 - a));
+        ctx.globalAlpha = a * 0.55; ctx.fillStyle = '#ffb347';
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = a; ctx.strokeStyle = p.color; ctx.lineWidth = 0.1;
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke();
       } else {
         ctx.strokeStyle = p.color; ctx.lineWidth = 0.08;
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1 - a) + 0.2, 0, Math.PI * 2); ctx.stroke();
@@ -278,16 +348,16 @@ export function createRenderer(canvas) {
   }
 
   function drawTags(view, shown) {
-    const fs = Math.max(11, Math.min(14, scale * 0.3));
+    const fs = Math.max(10, Math.min(13, scale * 0.32));
     for (const p of shown) {
       if (p.id === view.me || !p.alive) continue;
       const s = toScreen(p.x, p.y);
       const top = s.y - scale * 0.62;
-      const w = scale * 0.8;
+      const w = Math.max(18, scale * 0.8);
       ctx.fillStyle = 'rgba(3, 5, 12, 0.7)';
-      ctx.fillRect(s.x - w / 2, top, w, 4);
+      ctx.fillRect(s.x - w / 2, top, w, 3);
       ctx.fillStyle = TEAM_COLOR[p.team];
-      ctx.fillRect(s.x - w / 2, top, w * p.hp / 100, 4);
+      ctx.fillRect(s.x - w / 2, top, w * p.hp / 100, 3);
       label(p.name, s.x, top - 2, p.team === view.myTeam ? '#e8eeff' : TEAM_COLOR[p.team], fs);
     }
   }
@@ -315,19 +385,18 @@ export function createRenderer(canvas) {
   function drawCrosshair(view) {
     const { x, y } = view.mouse;
     if (x == null) return;
-    const c = view.reloadT > 0 ? '#ffd166' : '#e8eeff';
-    ctx.strokeStyle = 'rgba(3, 5, 12, 0.8)'; ctx.lineWidth = 4;
+    const c = view.reloadT > 0 && view.weapon === 'blaster' ? '#ffd166' : WEAPON_COLOR[view.weapon] || '#e8eeff';
     const draw = () => {
       ctx.beginPath();
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(x + dx * 5, y + dy * 5); ctx.lineTo(x + dx * 12, y + dy * 12); }
       ctx.stroke();
       ctx.beginPath(); ctx.arc(x, y, 1.5, 0, Math.PI * 2); ctx.stroke();
     };
-    draw();
+    ctx.strokeStyle = 'rgba(3, 5, 12, 0.8)'; ctx.lineWidth = 4; draw();
     ctx.strokeStyle = c; ctx.lineWidth = 2; draw();
     if (view.reloadT > 0) {
       ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(x, y, 17, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - view.reloadT / RELOAD)); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y, 17, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - view.reloadT / BLASTER.reload)); ctx.stroke();
     }
     if (markerT > 0) {
       ctx.strokeStyle = markerKill ? '#ff4d7e' : '#ffffff'; ctx.lineWidth = 2.5;
@@ -363,17 +432,17 @@ export function createRenderer(canvas) {
   function draw(view, dt) {
     const time = view.time;
     const me = view.players.find(p => p.id === view.me);
-    // Camera: on your robot, leaning a little toward the mouse so you see further where you aim.
+    // Camera: on your ball, leaning a little toward the mouse so you see further where you aim.
     if (me) {
       let lx = 0, ly = 0;
       if (view.mouse.x != null) {
         lx = (view.mouse.x - W / 2) / scale * 0.25; ly = (view.mouse.y - H / 2) / scale * 0.25;
-        const l = Math.hypot(lx, ly); if (l > 4) { lx *= 4 / l; ly *= 4 / l; }
+        const l = Math.hypot(lx, ly); if (l > 5) { lx *= 5 / l; ly *= 5 / l; }
       }
       const tx = me.x + lx, ty = me.y + ly;
       const k = Math.min(1, dt * 10);
       cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
-      if (Math.hypot(tx - cam.x, ty - cam.y) > 12) { cam.x = tx; cam.y = ty; }
+      if (Math.hypot(tx - cam.x, ty - cam.y) > 15) { cam.x = tx; cam.y = ty; }
     } else if (view.camTarget) {
       cam.x = view.camTarget.x; cam.y = view.camTarget.y;
     }
@@ -386,38 +455,45 @@ export function createRenderer(canvas) {
     view.vis = { x0: cam.x - hw, y0: cam.y - hh, x1: cam.x + hw, y1: cam.y + hh };
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = FLOOR; ctx.fillRect(0, 0, W, H);
-    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (W / 2 - (cam.x + sx) * scale), dpr * (H / 2 - (cam.y + sy) * scale));
+    ctx.fillStyle = OUTSIDE; ctx.fillRect(0, 0, W, H);
+    const ox = W / 2 - (cam.x + sx) * scale, oy = H / 2 - (cam.y + sy) * scale;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(mapImg, ox, oy, MAP_W * scale, MAP_H * scale);
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
 
-    drawFloor(vis);
     for (const t of TEAMS) drawStand(t, time);
-    drawWalls(vis);
-
     const eye = me || { x: cam.x, y: cam.y };
     const canSee = p => p.team === view.myTeam || lineOfSight(eye.x, eye.y, p.x, p.y);
     const shown = view.players.filter(p => p.alive && canSee(p));
 
     for (const t of TEAMS) {
       const f = view.flags[t];
-      if (f.state !== 'carried' && canSee({ team: t === view.myTeam ? t : '', x: f.x, y: f.y })) drawFlag(f.x, f.y, t, time);
+      if (f.state !== 'carried' && (t === view.myTeam || lineOfSight(eye.x, eye.y, f.x, f.y))) drawFlag(f.x, f.y, t, time);
     }
-    for (const s of view.shots) drawShot(s);
-    for (const p of shown) if (p.id !== view.me) drawRobot(p, time, false);
-    if (me && me.alive) drawRobot(me, time, true);
+    for (const s of view.shots) drawShot(s, time, dt);
+    for (const b of view.beams || []) drawBeam(b);
+    for (const p of shown) if (p.id !== view.me) drawBall(p, time, false);
+    if (me && me.alive) drawBall(me, time, true);
     drawParts(dt);
 
-    // Shade everything outside line of sight.
-    const poly = visibility(eye.x, eye.y, vis);
+    // Shade everything outside line of sight; the polygon only changes when the viewpoint moves.
+    const key = `${eye.x.toFixed(2)},${eye.y.toFixed(2)},${Math.floor(vis.x0)},${Math.floor(vis.y0)}`;
+    if (key !== visKey) {
+      visKey = key;
+      const box = { x0: Math.floor(vis.x0) - 1, y0: Math.floor(vis.y0) - 1, x1: Math.ceil(vis.x1) + 1, y1: Math.ceil(vis.y1) + 1 };
+      visPoly = visibility(eye.x, eye.y, box);
+    }
     ctx.fillStyle = SHADE;
     ctx.beginPath();
-    ctx.rect(vis.x0 - 2, vis.y0 - 2, vis.x1 - vis.x0 + 4, vis.y1 - vis.y0 + 4);
-    if (poly.length > 4) {
-      ctx.moveTo(poly[0], poly[1]);
-      for (let i = 2; i < poly.length; i += 2) ctx.lineTo(poly[i], poly[i + 1]);
+    ctx.rect(vis.x0 - 3, vis.y0 - 3, vis.x1 - vis.x0 + 6, vis.y1 - vis.y0 + 6);
+    if (visPoly.length > 4) {
+      ctx.moveTo(visPoly[0], visPoly[1]);
+      for (let i = 2; i < visPoly.length; i += 2) ctx.lineTo(visPoly[i], visPoly[i + 1]);
       ctx.closePath();
     }
     ctx.fill('evenodd');
-    drawEdges(vis, 0.55);
+    ctx.strokeStyle = EDGE; ctx.lineWidth = 0.06; ctx.lineCap = 'round';
+    ctx.stroke(EDGE_PATH);
     // Flags glow through the dark so you always know where they are.
     for (const t of TEAMS) {
       const f = view.flags[t];
@@ -435,13 +511,9 @@ export function createRenderer(canvas) {
     }
     if (view.idle) return;
     drawFlagArrows(view);
-    if (me && !me.alive) {
-      ctx.fillStyle = 'rgba(40, 0, 20, 0.35)'; ctx.fillRect(0, 0, W, H);
-    }
+    if (me && !me.alive) { ctx.fillStyle = 'rgba(40, 0, 20, 0.35)'; ctx.fillRect(0, 0, W, H); }
     if (flashA > 0) {
-      const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
-      g.addColorStop(0, 'rgba(0, 0, 0, 0)'); g.addColorStop(1, flashColor);
-      ctx.globalAlpha = flashA; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+      ctx.globalAlpha = flashA; ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
       flashA = Math.max(0, flashA - dt * 1.2);
     }
     drawMinimap(view, shown);
@@ -449,5 +521,9 @@ export function createRenderer(canvas) {
     markerT = Math.max(0, markerT - dt);
   }
 
-  return { resize, draw, fx, toScreen, meScreen, get scale() { return scale; } };
+  // Lower quality = fewer pixels per frame; used when a computer can't keep up.
+  function setQuality(q) { if (q !== quality) { quality = q; resize(); } }
+
+  return { resize, draw, fx, toScreen, meScreen, setQuality, get quality() { return quality; }, get scale() { return scale; } };
 }
+

@@ -27,6 +27,7 @@ function duel() {
   const b = S.addPlayer(g, { id: 'b', name: 'B', team: 'blue' });
   S.startMatch(g);
   r.shieldT = b.shieldT = 0;
+  r.weapon = b.weapon = 'blaster';
   return { g, r, b };
 }
 const place = (p, x, y) => { p.x = p.px = x; p.y = p.py = y; };
@@ -51,15 +52,15 @@ test('every floor tile is reachable from the red flag', () => {
 
 test('flag stands and spawns are clear of walls', () => {
   for (const t of S.TEAMS) {
-    ok(!S.boxHitsWall(S.STANDS[t].x, S.STANDS[t].y), `${t} stand`);
-    for (const p of S.SPAWNS[t]) ok(!S.boxHitsWall(p.x, p.y), `${t} spawn ${p.x},${p.y}`);
+    ok(!S.hitsWall(S.STANDS[t].x, S.STANDS[t].y), `${t} stand`);
+    for (const p of S.SPAWNS[t]) ok(!S.hitsWall(p.x, p.y), `${t} spawn ${p.x},${p.y}`);
   }
 });
 
 test('walking into a wall stops flush against it', () => {
   const p = { x: 2.5, y: 13.5 };
   for (let i = 0; i < 60; i++) S.move(p, -1, 0, S.TICK);
-  near(p.x, 1 + S.HALF, 0.01, 'x');
+  near(p.x, 1 + S.BODY, 0.01, 'x');
   near(p.y, 13.5, 1e-9, 'y unchanged');
 });
 
@@ -67,7 +68,7 @@ test('moving diagonally into a wall slides along it', () => {
   const p = { x: 2.5, y: 13.5 };
   for (let i = 0; i < 6; i++) S.move(p, -1, 1, S.TICK);
   ok(p.y > 13.9, `slid to y=${p.y}`);
-  ok(!S.boxHitsWall(p.x, p.y), 'not inside a wall');
+  ok(!S.hitsWall(p.x, p.y), 'not inside a wall');
 });
 
 test('a shot hits an enemy for 20 damage', () => {
@@ -77,7 +78,7 @@ test('a shot hits an enemy for 20 damage', () => {
   S.step(g); r.input.fire = false;
   run(g, 0.5);
   ok(b.hp === 80, `hp ${b.hp}`);
-  ok(r.ammo === S.CELL - 1, `ammo ${r.ammo}`);
+  ok(r.ammo === S.BLASTER.cell - 1, `ammo ${r.ammo}`);
 });
 
 test('shots do not hurt teammates', () => {
@@ -125,11 +126,111 @@ test('energy cell empties after 20 shots and reloads', () => {
   const { g, r } = duel();
   place(r, 5, 13.5);
   r.input.aim = Math.PI; r.input.fire = true;
-  run(g, 20 * S.FIRE_GAP + 0.2);
+  run(g, 20 * S.BLASTER.gap + 0.2);
   ok(r.reloadT > 0, `reloading (ammo ${r.ammo})`);
   r.input.fire = false;
-  run(g, S.RELOAD + 0.1);
-  ok(r.ammo === S.CELL, `ammo ${r.ammo}`);
+  run(g, S.BLASTER.reload + 0.1);
+  ok(r.ammo === S.BLASTER.cell, `ammo ${r.ammo}`);
+});
+
+test('walls are round at the corners: a ball slides past a corner', () => {
+  // Wall block at cols 12-15 row 12; roll along its underside and past its end.
+  const p = { x: 11.6, y: 13.39 };
+  for (let i = 0; i < 30; i++) S.move(p, 1, -0.3, S.TICK);
+  ok(!S.hitsWall(p.x, p.y), 'not inside a wall');
+  ok(p.x > 13, `moved along to x=${p.x.toFixed(2)}`);
+});
+
+test('lightning gun hits within 9 tiles, not beyond', () => {
+  const { g, r, b } = duel();
+  r.cls = 'lightning'; r.weapon = 'lightning';
+  place(r, 5, 13.5); place(b, 12, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  run(g, 0.55);
+  ok(b.hp < 100 && b.hp >= 100 - 6 * S.LIGHTNING.damage, `hp ${b.hp}`);
+  ok(r.beam && Math.abs(r.beam.x - 12) < 0.6, 'beam ends at the target');
+  const before = b.hp;
+  place(b, 16, 13.5);
+  run(g, 0.5);
+  ok(b.hp === before, `out of range hp ${b.hp}`);
+  ok(r.lg < S.LIGHTNING.max, 'uses charge');
+});
+
+test('lightning does not pass through walls', () => {
+  const { g, r, b } = duel();
+  r.cls = 'lightning'; r.weapon = 'lightning';
+  place(r, 13.5, 11.5); place(b, 13.5, 13.5);
+  r.input.aim = Math.PI / 2; r.input.fire = true;
+  run(g, 0.5);
+  ok(b.hp === 100, `hp ${b.hp}`);
+});
+
+test('rocket splash hurts an enemy next to the wall it hits, not a teammate', () => {
+  const { g, r, b } = duel();
+  const mate = S.addPlayer(g, { id: 'r2', name: 'R2', team: 'red' });
+  mate.shieldT = 0;
+  r.cls = 'demo'; r.weapon = 'rocket';
+  // The rocket flies left along row 13 into the outer wall; blue and a red teammate wait near it.
+  place(r, 10, 13.5); place(b, 2, 14.6); place(mate, 2, 12.4);
+  r.input.aim = Math.PI; r.input.fire = true;
+  S.step(g); r.input.fire = false;
+  run(g, 1);
+  ok(b.hp < 100 && b.hp > 0, `blue hp ${b.hp}`);
+  ok(mate.hp === 100, `mate hp ${mate.hp}`);
+  ok(r.hp === 100, 'shooter far away is fine');
+  ok(r.rk === S.ROCKET.ammo - 1, `rockets ${r.rk}`);
+});
+
+test('a direct rocket hit does full damage', () => {
+  const { g, r, b } = duel();
+  r.cls = 'demo'; r.weapon = 'rocket';
+  place(r, 5, 13.5); place(b, 11, 13.5);
+  r.input.aim = 0; r.input.fire = true;
+  S.step(g); r.input.fire = false;
+  run(g, 1);
+  ok(b.hp === 100 - S.ROCKET.max, `hp ${b.hp}`);
+});
+
+test('your own rocket hurts you at half strength', () => {
+  const { g, r } = duel();
+  r.cls = 'demo'; r.weapon = 'rocket';
+  place(r, 2.2, 13.5);
+  r.input.aim = Math.PI; r.input.fire = true;
+  S.step(g); r.input.fire = false;
+  run(g, 0.3);
+  ok(r.hp < 100 && r.hp >= 100 - S.ROCKET.max * S.SELF_DAMAGE, `hp ${r.hp}`);
+});
+
+test('grenades bounce off walls and explode when the fuse runs out', () => {
+  const { g, r, b } = duel();
+  r.cls = 'demo'; r.weapon = 'grenade';
+  place(r, 4, 13.5); place(b, 30, 13.5);
+  r.input.aim = Math.PI; r.input.fire = true;
+  S.step(g); r.input.fire = false;
+  run(g, 0.4);
+  const gr = g.shots.find(s => s.kind === 'grenade');
+  ok(gr && gr.vx > 0, 'bounced back to the right');
+  g.events = [];
+  run(g, S.GRENADE.fuse);
+  ok(!g.shots.some(s => s.kind === 'grenade'), 'gone');
+  ok(g.events.some(e => e.k === 'boom'), 'exploded');
+});
+
+test('loadouts: only your class weapons, new class from the next life', () => {
+  const { g, r, b } = duel();
+  r.cls = 'lightning'; r.weapon = 'blaster';
+  r.input.sw = 'rocket'; S.step(g);
+  ok(r.weapon === 'blaster', `switched to ${r.weapon}`);
+  r.input.sw = 'lightning'; S.step(g);
+  ok(r.weapon === 'lightning', `weapon ${r.weapon}`);
+  r.input.cls = 'demo'; S.step(g);
+  ok(r.cls === 'lightning' && r.nextCls === 'demo', 'class waits for respawn');
+  r.hp = 1; place(r, 30, 11.5); place(b, 24, 11.5);
+  b.input.aim = 0; b.input.fire = true;
+  run(g, 0.5); b.input.fire = false;
+  ok(!r.alive, 'disabled');
+  run(g, S.RESPAWN + 0.1);
+  ok(r.alive && r.cls === 'demo' && r.weapon === 'rocket', `respawned as ${r.cls} with ${r.weapon}`);
 });
 
 test('flag pickup, drop on disable, return by teammate', () => {
@@ -222,7 +323,7 @@ test('4v4 bot match runs 3 minutes and produces action', () => {
     for (const e of g.events) { if (e.k === 'pick') picks++; if (e.k === 'cap') caps++; if (e.k === 'kill') kills++; }
     g.events = [];
     maxShots = Math.max(maxShots, g.shots.length);
-    for (const p of Object.values(g.players)) if (p.alive && S.boxHitsWall(p.x, p.y)) throw new Error(`${p.name} inside a wall`);
+    for (const p of Object.values(g.players)) if (p.alive && S.hitsWall(p.x, p.y)) throw new Error(`${p.name} inside a wall`);
   }
   ok(kills > 0, 'no takedowns');
   ok(picks > 0, 'no flag pickups');

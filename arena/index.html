@@ -111,8 +111,27 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
 #hpFill { height: 100%; width: 100%; background: linear-gradient(90deg, #3ef0a0, #8dffcb); transition: width 0.15s; }
 #hpFill.low { background: linear-gradient(90deg, var(--red), #ff9ab5); }
 .vitals .num { font-family: var(--display); font-weight: 700; font-size: 1.1rem; }
-#ammo { position: absolute; right: 12px; bottom: 12px; text-align: right; font-family: var(--display); font-weight: 900; font-size: 1.8rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 14px; }
-#ammo small { display: block; font-family: var(--body); font-size: 0.75rem; color: var(--muted); font-weight: 700; letter-spacing: 0.1em; }
+#weapons { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 6px; pointer-events: auto; }
+#weapons .w {
+  display: grid; grid-template-columns: auto auto; align-items: center; column-gap: 8px; cursor: pointer;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px;
+  font-weight: 700; font-size: 0.85rem; color: var(--muted);
+}
+#weapons .w kbd { grid-row: span 2; }
+#weapons .w b { font-family: var(--body); font-weight: 800; font-size: 1.3rem; color: var(--text); font-variant-numeric: tabular-nums; }
+#weapons .w.on { border-color: var(--gold); color: var(--text); box-shadow: 0 0 0 1px var(--gold) inset; }
+#classPick {
+  position: absolute; left: 50%; top: 44%; transform: translateX(-50%); pointer-events: auto;
+  display: grid; gap: 8px; justify-items: center; text-align: center;
+}
+#nextClass { color: var(--muted); font-weight: 700; }
+.loadouts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.loadouts button { display: grid; gap: 2px; text-align: left; min-width: 180px; }
+.loadouts button small { color: var(--muted); font-weight: 500; }
+.loadouts button.on { border-color: var(--gold); background: rgba(255, 209, 102, 0.12); }
+.lobby-loadout { margin-bottom: 18px; }
+.lobby-loadout h2 { text-align: center; }
+#stats { position: absolute; left: 12px; top: 148px; font: 700 0.8rem var(--body); color: var(--muted); background: var(--panel); padding: 2px 8px; border-radius: 6px; }
 #center {
   position: absolute; left: 50%; top: 30%; transform: translate(-50%, -50%); text-align: center;
   font-family: var(--display); font-weight: 900; font-size: clamp(1.1rem, 3vw, 1.8rem); letter-spacing: 0.04em;
@@ -132,7 +151,7 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
 #scores tr.me td { font-weight: 800; }
 .result-title { font-family: var(--display); font-weight: 900; font-size: clamp(2rem, 6vw, 3rem); text-align: center; margin: 0 0 8px; }
 .result-score { text-align: center; font-family: var(--display); font-weight: 900; font-size: 1.6rem; margin: 0 0 18px; }
-#mute { position: fixed; right: 12px; bottom: 84px; pointer-events: auto; padding: 6px 10px; font-size: 0.85rem; }
+#mute { position: fixed; right: 12px; bottom: 76px; pointer-events: auto; padding: 6px 10px; font-size: 0.85rem; }
 </style>
 <body>
 <canvas id="arena" aria-label="Arena: top-down capture the flag"></canvas>
@@ -142,8 +161,16 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
   <div class="flagstate"><span id="flagRed" style="color: var(--red)">⚑ home</span><span id="flagBlue" style="color: var(--blue)">⚑ home</span></div>
   <div id="feed"></div>
   <div class="vitals"><div class="num" id="hpNum">100</div><div class="bar"><div id="hpFill"></div></div></div>
-  <div id="ammo">20<small>ENERGY</small></div>
+  <div id="weapons"></div>
   <div id="center"></div>
+  <div id="classPick" hidden>
+    <span id="nextClass"></span>
+    <div class="loadouts">
+      <button data-cls="lightning">⚡ Lightning<small>Blaster + lightning gun</small></button>
+      <button data-cls="demo">💥 Demolition<small>Blaster + rockets + grenades</small></button>
+    </div>
+  </div>
+  <div id="stats" hidden></div>
   <div id="toast" hidden></div>
 </div>
 <button id="mute" hidden title="Sound on/off (M)">🔊 Sound</button>
@@ -151,7 +178,7 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
 <section id="menu" class="screen">
   <div class="panel">
     <h1>ARENA</h1>
-    <p class="tagline">Top-down robot capture the flag · up to 4 vs 4</p>
+    <p class="tagline">Top-down capture the flag · up to 4 vs 4</p>
     <div class="field">
       <label for="nameInput">Your name</label>
       <input id="nameInput" maxlength="14" autocomplete="off" placeholder="Pilot">
@@ -167,7 +194,9 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
     </div>
     <p class="error" id="menuError" role="alert"></p>
     <p class="help">
-      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · mouse aims · click shoots · <kbd>R</kbd> reload · <kbd>Tab</kbd> scores · <kbd>M</kbd> sound · <kbd>Esc</kbd> menu.<br>
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · mouse aims · click shoots · <kbd>1</kbd>–<kbd>3</kbd>, wheel or <kbd>Q</kbd> switch weapon · <kbd>R</kbd> reload ·
+      <kbd>C</kbd> change loadout for next life · <kbd>Tab</kbd> scores · <kbd>M</kbd> sound · <kbd>F</kbd> fps/ping · <kbd>Esc</kbd> menu.<br>
+      Everyone has a blaster. Pick a loadout: <b>Lightning</b> (a short-range beam) or <b>Demolition</b> (rockets and bouncing grenades; explosions hurt you too, at half strength).
       Grab the enemy flag and bring it to yours. You can only score while your own flag is home. First to 3 wins.
     </p>
   </div>
@@ -179,6 +208,13 @@ kbd { font-family: var(--body); font-size: 0.8rem; border: 1px solid var(--line)
       <h2>Game code</h2>
       <div id="roomCode">----</div>
       <div class="row"><button id="copyLink">Copy invite link</button></div>
+    </div>
+    <div class="lobby-loadout">
+      <h2>Your loadout</h2>
+      <div class="loadouts">
+        <button data-cls="lightning">⚡ Lightning<small>Blaster + lightning gun</small></button>
+        <button data-cls="demo">💥 Demolition<small>Blaster + rockets + grenades</small></button>
+      </div>
     </div>
     <div class="teams">
       <div class="team red"><h3>RED</h3><ul id="listRed"></ul><button data-bot="red" class="host-only">+ Add bot</button></div>
