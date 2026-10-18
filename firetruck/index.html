@@ -94,7 +94,7 @@ button:focus-visible { outline: 4px solid var(--truck); outline-offset: 3px; }
 .home svg { width: 28px; height: 28px; }
 
 #board { position: relative; flex: 1; min-height: 0; background: #8fd16a; }
-#city { position: absolute; inset: 0; display: block; touch-action: none; }
+#city { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; } /* explicit size: a canvas otherwise shows at its pixel size, 2x too big on phones */
 
 .hint {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
