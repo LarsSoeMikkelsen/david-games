@@ -2,7 +2,7 @@
 <html lang="da">
 <title>Davids Lastbil</title>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,11 +20,12 @@
   color-scheme: light;
 }
 [hidden] { display: none !important; }
-html, body { height: 100%; overflow: hidden; background: var(--sky); color: var(--ink); }
+html, body { height: 100%; overflow: hidden; touch-action: manipulation; background: var(--sky); color: var(--ink); }
 body { -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
 
 #app {
-  position: fixed; inset: 0;
+  /* dvh = the area actually visible between the phone browser's toolbars; vh is the fallback. */
+  position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100dvh;
   display: flex; flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -121,6 +122,9 @@ button:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
 @keyframes pop { from { transform: translate(-50%, -50%) scale(0.2); } to { transform: translate(-50%, -50%) scale(1); } }
 
 @media (max-width: 560px) {
+  header { gap: 8px; justify-content: space-between; }
+  h1 { display: none; }
+  .home { width: 44px; height: 44px; }
   h1 { font-size: 1.15rem; }
   .honk { font-size: 1.2rem; padding: 8px 16px; }
   .sound { width: 44px; height: 44px; }
@@ -129,6 +133,21 @@ button:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
   .avatar { width: 46px; height: 46px; font-size: 27px; }
 }
 @media (max-width: 400px) { h1 { display: none; } header { justify-content: space-between; } }
+/* Short screens (phones held sideways): slim top bar so the board gets the height. */
+@media (max-height: 500px) {
+  header { padding-block: 4px; gap: 8px; }
+  h1 { font-size: 1.15rem; }
+  .avatar { width: 40px; height: 40px; font-size: 24px; }
+  .stars { font-size: 1.3rem; padding: 2px 12px 2px 8px; }
+  .stars svg { width: 22px; height: 22px; }
+  .sound, .home { width: 40px; height: 40px; }
+  .sound svg, .home svg { width: 22px; height: 22px; }
+  .honk { font-size: 1.1rem; padding: 6px 14px; }
+}
+/* On small screens the hint floats over the top road instead of covering the bottom row of buildings. */
+@media (max-width: 560px), (max-height: 500px) {
+  .hint { bottom: auto; top: 6px; font-size: 1rem; padding: 4px 14px; border-radius: 14px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .hint, .stars.bump, .avatar.bump, .banner { animation: none; }
 }
@@ -898,7 +917,8 @@ button:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
     cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     const land = W >= H;
     if (land !== landscape) { landscape = land; buildCity(); }
-    tile = Math.min(W / cols, H / rows);
+    const pad = Math.min(W, H) * 0.02; // keep the outer roads off the screen edge
+    tile = Math.min((W - 2 * pad) / cols, (H - 2 * pad) / rows);
     ox = (W - cols * tile) / 2; oy = (H - rows * tile) / 2;
   }
   let last = 0;
@@ -916,6 +936,7 @@ button:focus-visible { outline: 4px solid var(--cab); outline-offset: 3px; }
     resize();
     texts.push({ text: 'Hej David!', x: truck.x + 0.5, y: truck.y - 0.2, life: 3, max: 3, color: CAB });
     new ResizeObserver(resize).observe(wrap);
+    if (window.visualViewport) visualViewport.addEventListener('resize', resize); // phone toolbars and rotation
     requestAnimationFrame(loop);
   }
   const hot = window.claude && window.claude.hot;
